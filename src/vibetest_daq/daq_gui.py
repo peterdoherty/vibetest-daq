@@ -19,6 +19,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
@@ -184,27 +185,25 @@ class DaqWorker(QObject):
             self.error.emit(f"nidaqmx not available: {exc}")
             return
 
-        cfg         = self._cfg
-        fs_req      = cfg["sample_rate"]
-        block_dur   = cfg["block_duration"]
-        sensitivity = cfg["sensitivity"]
-        iepe_exc    = cfg["iepe_excitation"]
-        output_dir  = cfg["output_dir"]
-        file_prefix = cfg["file_prefix"]
-        mod1        = cfg["module_1"]
-        mod2        = cfg["module_2"]
-        ch_labels   = cfg["channel_labels"]
-        system_meta = cfg["system_metadata"]
+        cfg          = self._cfg
+        fs_req       = cfg["sample_rate"]
+        block_dur    = cfg["block_duration"]
+        sensitivity  = cfg["sensitivity"]
+        iepe_exc     = cfg["iepe_excitation"]
+        output_dir   = cfg["output_dir"]
+        file_prefix  = cfg["file_prefix"]
+        channel_specs = cfg["channel_specs"]   # list of (physical_channel, label)
+        ch_labels    = [s[1] for s in channel_specs]
+        system_meta  = cfg["system_metadata"]
         channel_meta = cfg["channel_metadata"]
-        n_ch        = len(ch_labels)
-        max_v       = DEFAULT_MAX_VOLTAGE
+        n_ch         = len(ch_labels)
+        max_v        = DEFAULT_MAX_VOLTAGE
 
         with nidaqmx.Task() as task:
-            for slot, dev in enumerate([mod1, mod2]):
-                for ch in range(3):
-                    task.ai_channels.add_ai_accel_chan(
-                        physical_channel=f"{dev}/ai{ch}",
-                        name_to_assign_to_channel=ch_labels[slot * 3 + ch],
+            for phys, label in channel_specs:
+                task.ai_channels.add_ai_accel_chan(
+                        physical_channel=phys,
+                        name_to_assign_to_channel=label,
                         terminal_config=TerminalConfiguration.DEFAULT,
                         min_val=-(max_v / (sensitivity / 1000)),
                         max_val=  max_v / (sensitivity / 1000),
@@ -361,6 +360,11 @@ class LevelMeter(QWidget):
         self._val.setText("—")
         self._apply_color("green")
 
+    def set_active(self, active: bool):
+        self._bar.setVisible(active)
+        self._val.setText("—" if active else "off")
+        self.setEnabled(active)
+
     def _apply_color(self, name: str):
         palette = {
             "green": ("#2ecc71", "#27ae60"),
@@ -385,6 +389,7 @@ class DaqController(QMainWindow):
         self.resize(720, 720)
         self._worker = None
         self._thread = None
+        self._active_meters: list[LevelMeter] = []
         self._build_ui()
         self._restore_settings()
 
@@ -533,27 +538,33 @@ class DaqController(QMainWindow):
         # ── Channel metadata ─────────────────────────────────────────────────
         grp_channels = QGroupBox("Channel Metadata")
         ch_layout = QGridLayout(grp_channels)
-        ch_layout.setColumnStretch(2, 1)
         ch_layout.setColumnStretch(3, 1)
-        ch_layout.addWidget(QLabel("Channel"), 0, 0)
-        ch_layout.addWidget(QLabel("Axis"), 0, 1)
-        ch_layout.addWidget(QLabel("Location"), 0, 2)
-        ch_layout.addWidget(QLabel("Sensor serial"), 0, 3)
+        ch_layout.setColumnStretch(4, 1)
+        ch_layout.addWidget(QLabel("Enable"),        0, 0)
+        ch_layout.addWidget(QLabel("Channel"),       0, 1)
+        ch_layout.addWidget(QLabel("Axis"),          0, 2)
+        ch_layout.addWidget(QLabel("Location"),      0, 3)
+        ch_layout.addWidget(QLabel("Sensor serial"), 0, 4)
         self._channel_metadata_edits = []
         for row, label in enumerate(CHANNEL_LABELS, start=1):
+            enabled = QCheckBox()
+            enabled.setChecked(True)
+            enabled.setToolTip(f"Include {label} in acquisition")
             axis = QLineEdit(DEFAULT_CHANNEL_AXES[row - 1])
             axis.setFixedWidth(64)
             location = QLineEdit()
             sensor_serial = QLineEdit()
-            ch_layout.addWidget(QLabel(label), row, 0)
-            ch_layout.addWidget(axis, row, 1)
-            ch_layout.addWidget(location, row, 2)
-            ch_layout.addWidget(sensor_serial, row, 3)
+            ch_layout.addWidget(enabled,       row, 0, Qt.AlignmentFlag.AlignHCenter)
+            ch_layout.addWidget(QLabel(label), row, 1)
+            ch_layout.addWidget(axis,          row, 2)
+            ch_layout.addWidget(location,      row, 3)
+            ch_layout.addWidget(sensor_serial, row, 4)
             self._channel_metadata_edits.append(
                 {
-                    "label": label,
-                    "axis": axis,
-                    "location": location,
+                    "label":         label,
+                    "enabled":       enabled,
+                    "axis":          axis,
+                    "location":      location,
                     "sensor_serial": sensor_serial,
                 }
             )
@@ -661,7 +672,7 @@ class DaqController(QMainWindow):
             self.txt_test_notes,
         ]
         for edits in self._channel_metadata_edits:
-            widgets.extend([edits["axis"], edits["location"], edits["sensor_serial"]])
+            widgets.extend([edits["enabled"], edits["axis"], edits["location"], edits["sensor_serial"]])
         return tuple(widgets)
 
     def _set_settings_enabled(self, enabled: bool):
@@ -684,6 +695,7 @@ class DaqController(QMainWindow):
         ):
             edit.textChanged.connect(self._update_metadata_summary)
         for edits in self._channel_metadata_edits:
+            edits["enabled"].checkStateChanged.connect(self._update_metadata_summary)
             edits["axis"].textChanged.connect(self._update_metadata_summary)
             edits["location"].textChanged.connect(self._update_metadata_summary)
         self.txt_test_notes.textChanged.connect(self._update_metadata_summary)
@@ -721,6 +733,8 @@ class DaqController(QMainWindow):
     def _channel_summary_text(self):
         parts = []
         for edits in self._channel_metadata_edits:
+            if not edits["enabled"].isChecked():
+                continue
             axis = edits["axis"].text().strip()
             location = edits["location"].text().strip()
             if axis and location:
@@ -756,6 +770,9 @@ class DaqController(QMainWindow):
         self.txt_test_notes.setPlainText(settings.value("system/test_notes", ""))
         for idx, edits in enumerate(self._channel_metadata_edits):
             prefix = f"channels/{idx}"
+            edits["enabled"].setChecked(
+                settings.value(f"{prefix}/enabled", True, type=bool)
+            )
             edits["axis"].setText(
                 settings.value(f"{prefix}/axis", DEFAULT_CHANNEL_AXES[idx])
             )
@@ -788,6 +805,7 @@ class DaqController(QMainWindow):
         for idx, edits in enumerate(self._channel_metadata_edits):
             prefix = f"channels/{idx}"
             settings.setValue(f"{prefix}/label", edits["label"])
+            settings.setValue(f"{prefix}/enabled", edits["enabled"].isChecked())
             settings.setValue(f"{prefix}/axis", edits["axis"].text())
             settings.setValue(f"{prefix}/location", edits["location"].text())
             settings.setValue(
@@ -816,12 +834,35 @@ class DaqController(QMainWindow):
                 "sensor_serial": edits["sensor_serial"].text().strip(),
             }
             for edits in self._channel_metadata_edits
+            if edits["enabled"].isChecked()
+        ]
+
+    def _enabled_channel_specs(self):
+        mod1 = self.txt_mod1.text()
+        mod2 = self.txt_mod2.text()
+        phys_map = [
+            f"{mod1}/ai0", f"{mod1}/ai1", f"{mod1}/ai2",
+            f"{mod2}/ai0", f"{mod2}/ai1", f"{mod2}/ai2",
+        ]
+        return [
+            (phys_map[idx], CHANNEL_LABELS[idx])
+            for idx, edits in enumerate(self._channel_metadata_edits)
+            if edits["enabled"].isChecked()
         ]
 
     # ── Transport handlers ────────────────────────────────────────────────────
 
     def _start(self):
         self._save_settings()
+
+        channel_specs = self._enabled_channel_specs()
+        if not channel_specs:
+            QMessageBox.warning(
+                self, "No channels selected",
+                "Enable at least one channel on the Channels tab before starting.",
+            )
+            return
+
         config = {
             "sample_rate":     self.spn_rate.value(),
             "block_duration":  self.spn_block.value(),
@@ -829,9 +870,7 @@ class DaqController(QMainWindow):
             "iepe_excitation": self.spn_iepe.value(),
             "output_dir":      self.txt_outdir.text(),
             "file_prefix":     self.txt_prefix.text(),
-            "module_1":        self.txt_mod1.text(),
-            "module_2":        self.txt_mod2.text(),
-            "channel_labels":  CHANNEL_LABELS,
+            "channel_specs":   channel_specs,
             "system_metadata": self._system_metadata(),
             "channel_metadata": self._channel_metadata(),
         }
@@ -853,8 +892,15 @@ class DaqController(QMainWindow):
         self.lbl_elapsed.setText("0:00:00")
         self.lbl_lastfile.setText("—")
         self.lbl_actual_rate.setText("—")
-        for m in self._meters:
-            m.reset()
+
+        enabled_labels = {spec[1] for spec in channel_specs}
+        self._active_meters = []
+        for meter, edits in zip(self._meters, self._channel_metadata_edits):
+            active = edits["label"] in enabled_labels
+            meter.set_active(active)
+            meter.reset()
+            if active:
+                self._active_meters.append(meter)
 
         self._thread.start()
         self.status.showMessage("Connecting to DAQ hardware…")
@@ -886,7 +932,7 @@ class DaqController(QMainWindow):
         m, s   = divmod(rem, 60)
         self.lbl_elapsed.setText(f"{h}:{m:02d}:{s:02d}")
         self.lbl_lastfile.setText(os.path.basename(path))
-        for meter, pk in zip(self._meters, peaks, strict=False):
+        for meter, pk in zip(self._active_meters, peaks, strict=False):
             meter.update_peak(pk)
 
     @Slot(str)
@@ -901,6 +947,9 @@ class DaqController(QMainWindow):
         self._thread.wait()
         self._worker = None
         self._thread = None
+        self._active_meters = []
+        for meter in self._meters:
+            meter.set_active(True)
         self._set_settings_enabled(True)
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
