@@ -1,0 +1,95 @@
+Yes. I think this is exactly the point where the DAQ GUI wants tabs.
+
+Right now the DAQ GUI has two different jobs competing for the same 
+vertical space:
+
+- Fast operational control: start/stop, sample rate, output path, 
+live status, level meters
+- Test documentation: DUT, fixture, operator, notes, and future 
+channel metadata
+
+Those are both important, but they have different tempos. The operator 
+needs the first set constantly. The second set should be easy to fill in, 
+persistent, and reviewable, but it does not need to stare at them while recording.
+
+I’d split it like this:
+
+**Main Tab**
+Keep this as the “run the test” screen.
+
+- Output directory
+- File prefix
+- Sample rate
+- Block duration
+- Sensitivity
+- IEPE
+- Module names
+- Start / Stop
+- Status
+- Level meters
+
+This tab should remain compact and confident. It is the cockpit.
+
+**Metadata Tab**
+Move the current System Metadata group here, then later add the richer context.
+
+- DUT make/model/serial
+- Test ID / run name
+- Test stand
+- Operator/location
+- Mounting / boundary condition
+- Excitation/source description
+- Environment
+- Notes
+
+All persistent, including notes in the DAQ app. Unlike analyzer report 
+notes, DAQ notes are capture-time metadata, so persistence is reasonable. 
+The user can revise them before each run.
+
+**Channels Tab**
+This is where the future high-value “not in your face” stuff belongs.
+
+For each channel:
+
+- Channel label
+- Axis
+- Sensor location
+- Sensor serial
+- Sensitivity override maybe later
+- Enabled/disabled maybe later
+
+Persist it. Write it to CSV headers. The analyzer can use it later to 
+rename/report channels as `Top X`, `Base Z`, etc.
+
+**Maybe Later: Hardware Tab**
+Only if the DAQ setup grows.
+
+- Chassis name
+- Module types
+- Module physical names
+- IEPE details
+- Voltage range
+
+But for now, module names can stay on Main because they are directly 
+needed for acquisition.
+
+**Persistence**
+Yes, persistent is right. Most of these fields rarely change, and when 
+they do, the user should simply edit them before starting the next run. 
+The DAQ GUI should save metadata on Start and on Close.
+
+One design detail I’d choose: the Main tab should show a small read-only 
+metadata summary, maybe one or two lines:
+
+```text
+DUT: Acme VX-10 SN-42    Test: Fan sweep, fixture A
+```
+
+That gives confidence that the metadata is set without making the form 
+dominate the window.
+
+So my recommendation: refactor DAQ GUI to a `QTabWidget` with `Main`, 
+`Metadata`, and eventually `Channels`. First implementation can create 
+`Main` and `Metadata`, move the existing System Metadata group into 
+`Metadata`, 
+keep persistence, and leave channel metadata for the next step.

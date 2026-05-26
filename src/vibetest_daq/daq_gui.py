@@ -14,7 +14,7 @@ import sys
 import time
 
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QDoubleSpinBox,
@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStatusBar,
+    QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -50,11 +52,24 @@ CHANNEL_LABELS = [
     "Mod1_Ch0", "Mod1_Ch1", "Mod1_Ch2",
     "Mod2_Ch0", "Mod2_Ch1", "Mod2_Ch2",
 ]
+DEFAULT_CHANNEL_AXES = ["X", "Y", "Z", "X", "Y", "Z"]
 
 
 # ── CSV writer (self-contained; keeps daq_gui independent of daq.py) ─────────
 
-def _write_block(data, ts, fs, output_dir, file_prefix, channel_labels, sensitivity):
+def _write_block(
+    data,
+    ts,
+    fs,
+    output_dir,
+    file_prefix,
+    channel_labels,
+    sensitivity,
+    system_metadata=None,
+    channel_metadata=None,
+):
+    system_metadata = system_metadata or {}
+    channel_metadata = channel_metadata or []
     os.makedirs(output_dir, exist_ok=True)
     stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
     path  = os.path.join(output_dir, f"{file_prefix}_{stamp}.csv")
@@ -63,7 +78,7 @@ def _write_block(data, ts, fs, output_dir, file_prefix, channel_labels, sensitiv
     t0_epoch = ts.timestamp()
     t_axis   = t0_epoch + np.arange(n_samp) / fs
 
-    header = "\n".join([
+    header_lines = [
         "# NI cDAQ-9174 / NI 9230 Vibration Data",
         f"# Block start (UTC): {ts.isoformat()}",
         f"# Block start (epoch s): {t0_epoch:.6f}",
@@ -72,9 +87,42 @@ def _write_block(data, ts, fs, output_dir, file_prefix, channel_labels, sensitiv
         f"# Channels:          {n_ch}",
         f"# Sensitivity (mV/g):{sensitivity}",
         "# Units:             g (acceleration)",
+    ]
+    header_labels = {
+        "test_id": "Test ID",
+        "dut_make": "DUT Make",
+        "dut_model": "DUT Model",
+        "dut_serial": "DUT Serial Number",
+        "test_stand": "Test Stand",
+        "operator": "Operator",
+        "location": "Location",
+        "notes": "Test Notes",
+    }
+    for key, label in header_labels.items():
+        value = str(system_metadata.get(key, "")).strip()
+        if not value:
+            continue
+        if key == "notes":
+            value = " | ".join(line.strip() for line in value.splitlines() if line.strip())
+            if value:
+                header_lines.append(f"# {label}: {value}")
+        else:
+            header_lines.append(f"# {label}: {value}")
+    channel_header_labels = {
+        "axis": "Axis",
+        "location": "Location",
+        "sensor_serial": "Sensor Serial",
+    }
+    for channel_label, channel_meta in zip(channel_labels, channel_metadata, strict=False):
+        for key, label in channel_header_labels.items():
+            value = str(channel_meta.get(key, "")).strip()
+            if value:
+                header_lines.append(f"# Channel {channel_label} {label}: {value}")
+    header_lines.extend([
         "# " + "-" * 60,
         "time_epoch_s," + ",".join(channel_labels),
     ])
+    header = "\n".join(header_lines)
 
     block_out = np.column_stack([t_axis, data.T])
     np.savetxt(
@@ -135,6 +183,8 @@ class DaqWorker(QObject):
         mod1        = cfg["module_1"]
         mod2        = cfg["module_2"]
         ch_labels   = cfg["channel_labels"]
+        system_meta = cfg["system_metadata"]
+        channel_meta = cfg["channel_metadata"]
         n_ch        = len(ch_labels)
         max_v       = DEFAULT_MAX_VOLTAGE
 
@@ -191,7 +241,8 @@ class DaqWorker(QObject):
                 data  = buf.copy()
                 peaks = [float(np.max(np.abs(data[i]))) for i in range(n_ch)]
                 path  = _write_block(data, block_ts, actual_fs,
-                                     output_dir, file_prefix, ch_labels, sensitivity)
+                                     output_dir, file_prefix, ch_labels, sensitivity,
+                                     system_meta, channel_meta)
                 n += 1
                 self.block_done.emit(n, path, time.monotonic() - t0, peaks)
 
@@ -268,10 +319,11 @@ class DaqController(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Vibration DAQ Controller")
-        self.resize(620, 560)
+        self.resize(720, 720)
         self._worker = None
         self._thread = None
         self._build_ui()
+        self._restore_settings()
 
     def _build_ui(self):
         central = QWidget()
@@ -279,6 +331,24 @@ class DaqController(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
+
+        self.tabs = QTabWidget()
+        root.addWidget(self.tabs)
+
+        acquire_tab = QWidget()
+        acquire_layout = QVBoxLayout(acquire_tab)
+        acquire_layout.setContentsMargins(8, 8, 8, 8)
+        acquire_layout.setSpacing(8)
+
+        metadata_tab = QWidget()
+        metadata_layout = QVBoxLayout(metadata_tab)
+        metadata_layout.setContentsMargins(8, 8, 8, 8)
+        metadata_layout.setSpacing(8)
+
+        channels_tab = QWidget()
+        channels_layout = QVBoxLayout(channels_tab)
+        channels_layout.setContentsMargins(8, 8, 8, 8)
+        channels_layout.setSpacing(8)
 
         # ── Acquisition settings ──────────────────────────────────────────────
         grp_cfg = QGroupBox("Acquisition Settings")
@@ -333,9 +403,9 @@ class DaqController(QMainWindow):
         gc.addWidget(QLabel("IEPE excitation:"), 4, 2)
         self.spn_iepe = QDoubleSpinBox()
         self.spn_iepe.setRange(0.000, 0.020)
-        self.spn_iepe.setValue(DEFAULT_IEPE_EXCITATION)
         self.spn_iepe.setSuffix(" A")
         self.spn_iepe.setDecimals(3)
+        self.spn_iepe.setValue(DEFAULT_IEPE_EXCITATION)
         self.spn_iepe.setSingleStep(0.002)
         self.spn_iepe.setToolTip(
             "Valid values depend on the NI module.\n"
@@ -343,7 +413,89 @@ class DaqController(QMainWindow):
         )
         gc.addWidget(self.spn_iepe, 4, 3)
 
-        root.addWidget(grp_cfg)
+        acquire_layout.addWidget(grp_cfg)
+
+        grp_summary = QGroupBox("Metadata Summary")
+        summary_layout = QVBoxLayout(grp_summary)
+        self.lbl_metadata_summary = QLabel("DUT: (not specified)")
+        self.lbl_metadata_summary.setWordWrap(True)
+        self.lbl_metadata_summary.setStyleSheet("font-size: 10px; color: #333;")
+        summary_layout.addWidget(self.lbl_metadata_summary)
+        acquire_layout.addWidget(grp_summary)
+
+        # ── System metadata ──────────────────────────────────────────────────
+        grp_system = QGroupBox("System Metadata")
+        gs_meta = QGridLayout(grp_system)
+        gs_meta.setColumnStretch(1, 1)
+        gs_meta.setColumnStretch(3, 1)
+
+        gs_meta.addWidget(QLabel("Test ID:"), 0, 0)
+        self.txt_test_id = QLineEdit()
+        gs_meta.addWidget(self.txt_test_id, 0, 1, 1, 3)
+
+        gs_meta.addWidget(QLabel("DUT make:"), 1, 0)
+        self.txt_dut_make = QLineEdit()
+        gs_meta.addWidget(self.txt_dut_make, 1, 1)
+
+        gs_meta.addWidget(QLabel("DUT model:"), 1, 2)
+        self.txt_dut_model = QLineEdit()
+        gs_meta.addWidget(self.txt_dut_model, 1, 3)
+
+        gs_meta.addWidget(QLabel("DUT serial:"), 2, 0)
+        self.txt_dut_serial = QLineEdit()
+        gs_meta.addWidget(self.txt_dut_serial, 2, 1)
+
+        gs_meta.addWidget(QLabel("Test stand:"), 2, 2)
+        self.txt_test_stand = QLineEdit()
+        gs_meta.addWidget(self.txt_test_stand, 2, 3)
+
+        gs_meta.addWidget(QLabel("Operator:"), 3, 0)
+        self.txt_operator = QLineEdit()
+        gs_meta.addWidget(self.txt_operator, 3, 1)
+
+        gs_meta.addWidget(QLabel("Location:"), 3, 2)
+        self.txt_location = QLineEdit()
+        gs_meta.addWidget(self.txt_location, 3, 3)
+
+        gs_meta.addWidget(QLabel("Notes:"), 4, 0)
+        self.txt_test_notes = QTextEdit()
+        self.txt_test_notes.setAcceptRichText(False)
+        self.txt_test_notes.setPlaceholderText("Test setup, intent, fixture notes")
+        self.txt_test_notes.setMinimumHeight(70)
+        gs_meta.addWidget(self.txt_test_notes, 4, 1, 1, 3)
+
+        metadata_layout.addWidget(grp_system)
+        metadata_layout.addStretch()
+
+        # ── Channel metadata ─────────────────────────────────────────────────
+        grp_channels = QGroupBox("Channel Metadata")
+        ch_layout = QGridLayout(grp_channels)
+        ch_layout.setColumnStretch(2, 1)
+        ch_layout.setColumnStretch(3, 1)
+        ch_layout.addWidget(QLabel("Channel"), 0, 0)
+        ch_layout.addWidget(QLabel("Axis"), 0, 1)
+        ch_layout.addWidget(QLabel("Location"), 0, 2)
+        ch_layout.addWidget(QLabel("Sensor serial"), 0, 3)
+        self._channel_metadata_edits = []
+        for row, label in enumerate(CHANNEL_LABELS, start=1):
+            axis = QLineEdit(DEFAULT_CHANNEL_AXES[row - 1])
+            axis.setFixedWidth(64)
+            location = QLineEdit()
+            sensor_serial = QLineEdit()
+            ch_layout.addWidget(QLabel(label), row, 0)
+            ch_layout.addWidget(axis, row, 1)
+            ch_layout.addWidget(location, row, 2)
+            ch_layout.addWidget(sensor_serial, row, 3)
+            self._channel_metadata_edits.append(
+                {
+                    "label": label,
+                    "axis": axis,
+                    "location": location,
+                    "sensor_serial": sensor_serial,
+                }
+            )
+        channels_layout.addWidget(grp_channels)
+        channels_layout.addStretch()
 
         # ── Transport ─────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -357,7 +509,7 @@ class DaqController(QMainWindow):
         self.btn_stop.clicked.connect(self._stop)
         btn_row.addWidget(self.btn_start)
         btn_row.addWidget(self.btn_stop)
-        root.addLayout(btn_row)
+        acquire_layout.addLayout(btn_row)
 
         # ── Status readouts ───────────────────────────────────────────────────
         grp_stat = QGroupBox("Status")
@@ -387,7 +539,7 @@ class DaqController(QMainWindow):
         self.lbl_lastfile.setStyleSheet("font-size: 10px; color: grey;")
         gs.addWidget(self.lbl_lastfile, 2, 1, 1, 3)
 
-        root.addWidget(grp_stat)
+        acquire_layout.addWidget(grp_stat)
 
         # ── Channel level meters ──────────────────────────────────────────────
         grp_lvl = QGroupBox("Channel Levels  (peak per block)")
@@ -414,12 +566,17 @@ class DaqController(QMainWindow):
             glv.addWidget(m)
             self._meters.append(m)
 
-        root.addWidget(grp_lvl)
-        root.addStretch()
+        acquire_layout.addWidget(grp_lvl)
+        acquire_layout.addStretch()
+
+        self.tabs.addTab(acquire_tab, "Acquire")
+        self.tabs.addTab(metadata_tab, "Metadata")
+        self.tabs.addTab(channels_tab, "Channels")
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage("Ready — configure settings and press Start.")
+        self._connect_metadata_summary_updates()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -431,11 +588,18 @@ class DaqController(QMainWindow):
             self.txt_outdir.setText(d)
 
     def _settings_widgets(self):
-        return (
+        widgets = [
             self.txt_outdir, self.btn_browse, self.txt_prefix,
             self.spn_rate, self.spn_block, self.spn_sens,
             self.spn_iepe, self.txt_mod1, self.txt_mod2,
-        )
+            self.txt_test_id,
+            self.txt_dut_make, self.txt_dut_model, self.txt_dut_serial,
+            self.txt_test_stand, self.txt_operator, self.txt_location,
+            self.txt_test_notes,
+        ]
+        for edits in self._channel_metadata_edits:
+            widgets.extend([edits["axis"], edits["location"], edits["sensor_serial"]])
+        return tuple(widgets)
 
     def _set_settings_enabled(self, enabled: bool):
         for w in self._settings_widgets():
@@ -445,9 +609,156 @@ class DaqController(QMainWindow):
         for m in self._meters:
             m.full_scale_g = value
 
+    def _connect_metadata_summary_updates(self):
+        for edit in (
+            self.txt_test_id,
+            self.txt_dut_make,
+            self.txt_dut_model,
+            self.txt_dut_serial,
+            self.txt_test_stand,
+            self.txt_operator,
+            self.txt_location,
+        ):
+            edit.textChanged.connect(self._update_metadata_summary)
+        for edits in self._channel_metadata_edits:
+            edits["axis"].textChanged.connect(self._update_metadata_summary)
+            edits["location"].textChanged.connect(self._update_metadata_summary)
+        self.txt_test_notes.textChanged.connect(self._update_metadata_summary)
+        self._update_metadata_summary()
+
+    def _update_metadata_summary(self):
+        dut_parts = [
+            self.txt_dut_make.text().strip(),
+            self.txt_dut_model.text().strip(),
+            self.txt_dut_serial.text().strip(),
+        ]
+        dut = " ".join(part for part in dut_parts if part) or "(not specified)"
+        test_id = self.txt_test_id.text().strip() or "(not specified)"
+        setup_parts = [
+            self.txt_test_stand.text().strip(),
+            self.txt_operator.text().strip(),
+            self.txt_location.text().strip(),
+        ]
+        setup = " | ".join(part for part in setup_parts if part) or "(not specified)"
+        notes = self.txt_test_notes.toPlainText().strip().replace("\n", " | ")
+        if len(notes) > 120:
+            notes = notes[:117].rstrip() + "..."
+        lines = [
+            f"Test: {test_id}",
+            f"DUT: {dut}",
+            f"Setup: {setup}",
+        ]
+        channel_summary = self._channel_summary_text()
+        if channel_summary:
+            lines.append(f"Channels: {channel_summary}")
+        if notes:
+            lines.append(f"Notes: {notes}")
+        self.lbl_metadata_summary.setText("\n".join(lines))
+
+    def _channel_summary_text(self):
+        parts = []
+        for edits in self._channel_metadata_edits:
+            axis = edits["axis"].text().strip()
+            location = edits["location"].text().strip()
+            if axis and location:
+                parts.append(f"{edits['label']}={location} {axis}")
+            elif axis:
+                parts.append(f"{edits['label']}={axis}")
+            elif location:
+                parts.append(f"{edits['label']}={location}")
+        return "; ".join(parts[:6])
+
+    def _settings(self):
+        return QSettings("vibetest", "daq")
+
+    def _restore_settings(self):
+        settings = self._settings()
+        self.tabs.setCurrentIndex(int(settings.value("window/current_tab", 0)))
+        self.txt_outdir.setText(settings.value("acquisition/output_dir", DEFAULT_OUTPUT_DIR))
+        self.txt_prefix.setText(settings.value("acquisition/file_prefix", DEFAULT_FILE_PREFIX))
+        self.spn_rate.setValue(float(settings.value("acquisition/sample_rate", DEFAULT_SAMPLE_RATE)))
+        self.spn_block.setValue(float(settings.value("acquisition/block_duration", DEFAULT_BLOCK_DURATION)))
+        self.spn_sens.setValue(float(settings.value("acquisition/sensitivity", DEFAULT_SENSITIVITY)))
+        self.spn_iepe.setValue(float(settings.value("acquisition/iepe_excitation", DEFAULT_IEPE_EXCITATION)))
+        self.txt_mod1.setText(settings.value("acquisition/module_1", DEFAULT_MODULE_1))
+        self.txt_mod2.setText(settings.value("acquisition/module_2", DEFAULT_MODULE_2))
+        self.spn_meter_range.setValue(float(settings.value("acquisition/meter_range_g", 1.0)))
+        self.txt_test_id.setText(settings.value("system/test_id", ""))
+        self.txt_dut_make.setText(settings.value("system/dut_make", ""))
+        self.txt_dut_model.setText(settings.value("system/dut_model", ""))
+        self.txt_dut_serial.setText(settings.value("system/dut_serial", ""))
+        self.txt_test_stand.setText(settings.value("system/test_stand", ""))
+        self.txt_operator.setText(settings.value("system/operator", ""))
+        self.txt_location.setText(settings.value("system/location", ""))
+        self.txt_test_notes.setPlainText(settings.value("system/test_notes", ""))
+        for idx, edits in enumerate(self._channel_metadata_edits):
+            prefix = f"channels/{idx}"
+            edits["axis"].setText(
+                settings.value(f"{prefix}/axis", DEFAULT_CHANNEL_AXES[idx])
+            )
+            edits["location"].setText(settings.value(f"{prefix}/location", ""))
+            edits["sensor_serial"].setText(
+                settings.value(f"{prefix}/sensor_serial", "")
+            )
+        self._update_metadata_summary()
+
+    def _save_settings(self):
+        settings = self._settings()
+        settings.setValue("window/current_tab", self.tabs.currentIndex())
+        settings.setValue("acquisition/output_dir", self.txt_outdir.text())
+        settings.setValue("acquisition/file_prefix", self.txt_prefix.text())
+        settings.setValue("acquisition/sample_rate", self.spn_rate.value())
+        settings.setValue("acquisition/block_duration", self.spn_block.value())
+        settings.setValue("acquisition/sensitivity", self.spn_sens.value())
+        settings.setValue("acquisition/iepe_excitation", self.spn_iepe.value())
+        settings.setValue("acquisition/module_1", self.txt_mod1.text())
+        settings.setValue("acquisition/module_2", self.txt_mod2.text())
+        settings.setValue("acquisition/meter_range_g", self.spn_meter_range.value())
+        settings.setValue("system/test_id", self.txt_test_id.text())
+        settings.setValue("system/dut_make", self.txt_dut_make.text())
+        settings.setValue("system/dut_model", self.txt_dut_model.text())
+        settings.setValue("system/dut_serial", self.txt_dut_serial.text())
+        settings.setValue("system/test_stand", self.txt_test_stand.text())
+        settings.setValue("system/operator", self.txt_operator.text())
+        settings.setValue("system/location", self.txt_location.text())
+        settings.setValue("system/test_notes", self.txt_test_notes.toPlainText())
+        for idx, edits in enumerate(self._channel_metadata_edits):
+            prefix = f"channels/{idx}"
+            settings.setValue(f"{prefix}/label", edits["label"])
+            settings.setValue(f"{prefix}/axis", edits["axis"].text())
+            settings.setValue(f"{prefix}/location", edits["location"].text())
+            settings.setValue(
+                f"{prefix}/sensor_serial", edits["sensor_serial"].text()
+            )
+        settings.sync()
+
+    def _system_metadata(self):
+        return {
+            "test_id": self.txt_test_id.text().strip(),
+            "dut_make": self.txt_dut_make.text().strip(),
+            "dut_model": self.txt_dut_model.text().strip(),
+            "dut_serial": self.txt_dut_serial.text().strip(),
+            "test_stand": self.txt_test_stand.text().strip(),
+            "operator": self.txt_operator.text().strip(),
+            "location": self.txt_location.text().strip(),
+            "notes": self.txt_test_notes.toPlainText().strip(),
+        }
+
+    def _channel_metadata(self):
+        return [
+            {
+                "label": edits["label"],
+                "axis": edits["axis"].text().strip(),
+                "location": edits["location"].text().strip(),
+                "sensor_serial": edits["sensor_serial"].text().strip(),
+            }
+            for edits in self._channel_metadata_edits
+        ]
+
     # ── Transport handlers ────────────────────────────────────────────────────
 
     def _start(self):
+        self._save_settings()
         config = {
             "sample_rate":     self.spn_rate.value(),
             "block_duration":  self.spn_block.value(),
@@ -458,6 +769,8 @@ class DaqController(QMainWindow):
             "module_1":        self.txt_mod1.text(),
             "module_2":        self.txt_mod2.text(),
             "channel_labels":  CHANNEL_LABELS,
+            "system_metadata": self._system_metadata(),
+            "channel_metadata": self._channel_metadata(),
         }
 
         self._worker = DaqWorker(config)
@@ -533,6 +846,7 @@ class DaqController(QMainWindow):
         self.status.showMessage("Acquisition stopped.")
 
     def closeEvent(self, event):
+        self._save_settings()
         if self._worker:
             self._worker.request_stop()
             if self._thread:
