@@ -10,7 +10,9 @@ Settings are locked while recording and restored on stop.
 
 import datetime
 import os
+import queue
 import sys
+import threading
 import time
 
 import numpy as np
@@ -67,6 +69,9 @@ def _write_block(
     sensitivity,
     system_metadata=None,
     channel_metadata=None,
+    _t_offsets=None,
+    _out_buf=None,
+    _fmt=None,
 ):
     system_metadata = system_metadata or {}
     channel_metadata = channel_metadata or []
@@ -76,7 +81,8 @@ def _write_block(
 
     n_ch, n_samp = data.shape
     t0_epoch = ts.timestamp()
-    t_axis   = t0_epoch + np.arange(n_samp) / fs
+    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
+    t_axis    = t0_epoch + t_offsets
 
     header_lines = [
         "# NI cDAQ-9174 / NI 9230 Vibration Data",
@@ -124,12 +130,17 @@ def _write_block(
     ])
     header = "\n".join(header_lines)
 
-    block_out = np.column_stack([t_axis, data.T])
-    np.savetxt(
-        path, block_out, delimiter=",",
-        header=header, comments="",
-        fmt="%.6f," + ",".join(["%.8g"] * n_ch),
-    )
+    if _out_buf is not None:
+        _out_buf[:, 0] = t_axis
+        _out_buf[:, 1:] = data.T
+        block_out = _out_buf
+    else:
+        block_out = np.column_stack([t_axis, data.T])
+
+    fmt = _fmt if _fmt is not None else "%.6f," + ",".join(["%.8g"] * n_ch)
+    with open(path, "w", buffering=1 << 16) as f:
+        f.write(header + "\n")
+        np.savetxt(f, block_out, delimiter=",", fmt=fmt)
     return path
 
 
@@ -207,7 +218,7 @@ class DaqWorker(QObject):
             task.timing.cfg_samp_clk_timing(
                 rate=fs_req,
                 sample_mode=AcquisitionType.CONTINUOUS,
-                samps_per_chan=int(fs_req * block_dur) * 4,
+                samps_per_chan=int(fs_req * block_dur) * 8,
             )
 
             actual_fs = task.timing.samp_clk_rate
@@ -219,12 +230,56 @@ class DaqWorker(QObject):
             reader = AnalogMultiChannelReader(task.in_stream)
             buf    = np.zeros((n_ch, samps), dtype=np.float64)
 
+            # Pre-compute write constants that are fixed for the whole session.
+            _t_offsets = np.arange(samps) / actual_fs
+            _out_buf   = np.empty((samps, n_ch + 1), dtype=np.float64)
+            _fmt       = "%.6f," + ",".join(["%.8g"] * n_ch)
+
+            # Writer thread: CSV writes are decoupled from the read loop so the
+            # hardware buffer never stalls waiting for disk I/O.
+            write_queue  = queue.Queue()
+            result_queue = queue.Queue()
+
+            def _writer():
+                while True:
+                    item = write_queue.get()
+                    if item is None:
+                        break
+                    blk_n, blk_data, blk_ts = item
+                    try:
+                        path = _write_block(
+                            blk_data, blk_ts, actual_fs,
+                            output_dir, file_prefix, ch_labels, sensitivity,
+                            system_meta, channel_meta,
+                            _t_offsets=_t_offsets,
+                            _out_buf=_out_buf,
+                            _fmt=_fmt,
+                        )
+                        peaks = np.max(np.abs(blk_data), axis=1).tolist()
+                        result_queue.put((blk_n, path, peaks, None))
+                    except Exception as exc:
+                        result_queue.put((blk_n, None, None, str(exc)))
+
+            writer = threading.Thread(target=_writer, daemon=True)
+            writer.start()
+
             acq_start = datetime.datetime.utcnow()
             task.start()
             t0 = time.monotonic()
             n  = 0
 
             while not self._stop:
+                # Emit signals for any blocks the writer has finished.
+                while True:
+                    try:
+                        blk_n, path, peaks, err = result_queue.get_nowait()
+                        if err is not None:
+                            self.error.emit(err)
+                        else:
+                            self.block_done.emit(blk_n, path, time.monotonic() - t0, peaks)
+                    except queue.Empty:
+                        break
+
                 block_ts = acq_start + datetime.timedelta(
                     seconds=n * samps / actual_fs
                 )
@@ -238,15 +293,23 @@ class DaqWorker(QObject):
                     self.error.emit(str(exc))
                     break
 
-                data  = buf.copy()
-                peaks = [float(np.max(np.abs(data[i]))) for i in range(n_ch)]
-                path  = _write_block(data, block_ts, actual_fs,
-                                     output_dir, file_prefix, ch_labels, sensitivity,
-                                     system_meta, channel_meta)
                 n += 1
-                self.block_done.emit(n, path, time.monotonic() - t0, peaks)
+                write_queue.put((n, buf.copy(), block_ts))
 
             task.stop()
+
+            # Shut down writer and drain remaining results.
+            write_queue.put(None)
+            writer.join()
+            while True:
+                try:
+                    blk_n, path, peaks, err = result_queue.get_nowait()
+                    if err is not None:
+                        self.error.emit(err)
+                    else:
+                        self.block_done.emit(blk_n, path, time.monotonic() - t0, peaks)
+                except queue.Empty:
+                    break
 
 
 # ── Level meter widget ────────────────────────────────────────────────────────
