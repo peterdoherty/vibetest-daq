@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDoubleSpinBox,
+    QSpinBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -48,6 +49,7 @@ DEFAULT_IEPE_EXCITATION = 0.004
 DEFAULT_MAX_VOLTAGE     = 5.0
 DEFAULT_OUTPUT_DIR      = "vibration_data"
 DEFAULT_FILE_PREFIX     = "vib"
+DEFAULT_FILE_COUNT      = 10
 DEFAULT_MODULE_1        = "cDAQ1Mod1"
 DEFAULT_MODULE_2        = "cDAQ1Mod2"
 
@@ -266,8 +268,11 @@ class DaqWorker(QObject):
             task.start()
             t0 = time.monotonic()
             n  = 0
+            max_blocks = None if cfg.get("continuous", True) else max(1, int(cfg.get("file_count", 1)))
 
             while not self._stop:
+                if max_blocks is not None and n >= max_blocks:
+                    break
                 # Emit signals for any blocks the writer has finished.
                 while True:
                     try:
@@ -481,6 +486,17 @@ class DaqController(QMainWindow):
         )
         gc.addWidget(self.spn_iepe, 4, 3)
 
+        gc.addWidget(QLabel("File count:"), 5, 0)
+        self.spn_file_count = QSpinBox()
+        self.spn_file_count.setRange(1, 10000)
+        self.spn_file_count.setValue(DEFAULT_FILE_COUNT)
+        gc.addWidget(self.spn_file_count, 5, 1)
+
+        self.chk_continuous = QCheckBox("Continuous")
+        self.chk_continuous.setChecked(True)
+        self.chk_continuous.toggled.connect(self._on_continuous_toggled)
+        gc.addWidget(self.chk_continuous, 5, 2, 1, 2)
+
         acquire_layout.addWidget(grp_cfg)
 
         grp_summary = QGroupBox("Metadata Summary")
@@ -665,7 +681,8 @@ class DaqController(QMainWindow):
         widgets = [
             self.txt_outdir, self.btn_browse, self.txt_prefix,
             self.spn_rate, self.spn_block, self.spn_sens,
-            self.spn_iepe, self.txt_mod1, self.txt_mod2,
+            self.spn_iepe, self.spn_file_count, self.chk_continuous,
+            self.txt_mod1, self.txt_mod2,
             self.txt_test_id,
             self.txt_dut_make, self.txt_dut_model, self.txt_dut_serial,
             self.txt_test_stand, self.txt_operator, self.txt_location,
@@ -682,6 +699,9 @@ class DaqController(QMainWindow):
     def _on_meter_range_changed(self, value: float):
         for m in self._meters:
             m.full_scale_g = value
+
+    def _on_continuous_toggled(self, enabled: bool):
+        self.spn_file_count.setEnabled(not enabled)
 
     def _connect_metadata_summary_updates(self):
         for edit in (
@@ -757,6 +777,11 @@ class DaqController(QMainWindow):
         self.spn_block.setValue(float(settings.value("acquisition/block_duration", DEFAULT_BLOCK_DURATION)))
         self.spn_sens.setValue(float(settings.value("acquisition/sensitivity", DEFAULT_SENSITIVITY)))
         self.spn_iepe.setValue(float(settings.value("acquisition/iepe_excitation", DEFAULT_IEPE_EXCITATION)))
+        self.spn_file_count.setValue(int(settings.value("acquisition/file_count", DEFAULT_FILE_COUNT)))
+        self.chk_continuous.setChecked(
+            settings.value("acquisition/continuous", True, type=bool)
+        )
+        self._on_continuous_toggled(self.chk_continuous.isChecked())
         self.txt_mod1.setText(settings.value("acquisition/module_1", DEFAULT_MODULE_1))
         self.txt_mod2.setText(settings.value("acquisition/module_2", DEFAULT_MODULE_2))
         self.spn_meter_range.setValue(float(settings.value("acquisition/meter_range_g", 1.0)))
@@ -791,6 +816,8 @@ class DaqController(QMainWindow):
         settings.setValue("acquisition/block_duration", self.spn_block.value())
         settings.setValue("acquisition/sensitivity", self.spn_sens.value())
         settings.setValue("acquisition/iepe_excitation", self.spn_iepe.value())
+        settings.setValue("acquisition/file_count", self.spn_file_count.value())
+        settings.setValue("acquisition/continuous", self.chk_continuous.isChecked())
         settings.setValue("acquisition/module_1", self.txt_mod1.text())
         settings.setValue("acquisition/module_2", self.txt_mod2.text())
         settings.setValue("acquisition/meter_range_g", self.spn_meter_range.value())
@@ -872,8 +899,8 @@ class DaqController(QMainWindow):
             "file_prefix":     self.txt_prefix.text(),
             "channel_specs":   channel_specs,
             "system_metadata": self._system_metadata(),
-            "channel_metadata": self._channel_metadata(),
-        }
+            "channel_metadata": self._channel_metadata(),            "continuous":      self.chk_continuous.isChecked(),
+            "file_count":      int(self.spn_file_count.value()),        }
 
         self._worker = DaqWorker(config)
         self._thread = QThread()
@@ -921,6 +948,8 @@ class DaqController(QMainWindow):
         self.lbl_actual_rate.setText(f"{actual_fs:.4f} Hz")
         self.lbl_state.setText("Recording")
         msg = f"Recording — actual rate {actual_fs:.4f} Hz"
+        if not self.chk_continuous.isChecked():
+            msg += f"  — target {self.spn_file_count.value()} file(s)"
         if abs(offset_pct) > 0.05:
             msg += f"  (requested {requested:.0f} Hz,  {offset_pct:+.3f}%)"
         self.status.showMessage(msg)
