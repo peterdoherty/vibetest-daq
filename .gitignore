@@ -1,22 +1,108 @@
+########################
+# Python / Packaging   #
+########################
+
+# Bytecode / caches
 __pycache__/
 *.py[cod]
+*.pyo
 *$py.class
+.pytest_cache/
+.pytest-mpl-cache/
+.ruff_cache/
 
-.Python
+# Build / dist artifacts
+build/
+dist/
+downloads/
+wheels/
+sdist/
+eggs/
+.eggs/
+develop-eggs/
+parts/
+var/
+lib/
+lib64/
+*.egg-info/
+*.egg
+.installed.cfg
+
+########################
+# Virtual Environments #
+########################
+
 .venv/
 venv/
 env/
+ENV/
+.env/
 
-build/
-dist/
-*.egg-info/
+########################
+# Test / Coverage      #
+########################
 
-.pytest_cache/
-.ruff_cache/
 .coverage
+htmlcov/
 
-vibration_data/
+########################
+# Editors / IDE        #
+########################
 
-.idea/
+# VS Code: ignore the folder, but keep key project files
 .vscode/
-vibetest-daq.code-workspace
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+.vscode/*.code-snippets
+
+# Workspace files are usually per-user
+*.code-workspace
+
+# Other editors
+.idea/
+*.swp
+*.swo
+
+########################
+# OS / Tools           #
+########################
+
+# macOS
+.DS_Store
+*/.DS_Store
+
+# Claude configuration
+.claude/
+
+########################
+# Logs / Scratch / Data#
+########################
+
+logs/
+*.log
+scratch/
+notes/
+data/
+
+# Zip / archive files and dirs (history lives in git)
+*.zip
+*.tar
+*.tar.gz
+archive/
+_archive/
+**/__archive/
+**/_archive/
+**/archive/
+
+########################
+# Project-specific     #
+########################
+
+# (Add per‑repo ignores here)
+# Examples:
+# *.wav
+# image16
+# acquisition_*.log
+# run.log
