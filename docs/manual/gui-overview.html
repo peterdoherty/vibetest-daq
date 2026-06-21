@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GUI Overview &mdash; Vibetest DAQ Manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>GUI Overview</h1>
+  <p>The Acquire tab is the primary operational screen &mdash; your cockpit for running vibration tests.</p>
+</header>
+
+<nav>
+  <a href="index.html">Home</a>
+  <a href="getting-started.html">Getting Started</a>
+  <a href="gui-overview.html">GUI Overview</a>
+  <a href="metadata.html">Metadata</a>
+  <a href="channels.html">Channels</a>
+  <a href="cli.html">Command Line</a>
+  <a href="csv-format.html">Output Formats</a>
+  <a href="troubleshooting.html">Troubleshooting</a>
+</nav>
+
+<main>
+
+<h2>Window Layout</h2>
+
+<p>The GUI window is organized into three tabs across the top:</p>
+
+<ol>
+  <li><strong>Acquire</strong> &mdash; acquisition settings, start/stop controls, live
+      status, and channel level meters (this page).</li>
+  <li><strong>Metadata</strong> &mdash; test identity, device-under-test info, and
+      operator details (<a href="metadata.html">see Metadata</a>).</li>
+  <li><strong>Channels</strong> &mdash; per-channel enable/disable, axis labels,
+      sensor locations, and serial numbers
+      (<a href="channels.html">see Channels</a>).</li>
+</ol>
+
+<p>A status bar at the bottom of the window shows real-time messages about the current
+state of the system.</p>
+
+<h2>Acquisition Settings</h2>
+
+<p>The top section of the Acquire tab contains all of the parameters that control how
+data is captured and where it is saved.</p>
+
+<table>
+  <tr><th>Setting</th><th>Default</th><th>Description</th></tr>
+  <tr>
+    <td>Output directory</td>
+    <td><code>vibration_data</code></td>
+    <td>Folder where CSV files are written. Use the <strong>Browse</strong> button to
+        choose a location. The directory is created automatically if it does not
+        exist.</td>
+  </tr>
+  <tr>
+    <td>File prefix</td>
+    <td><code>vib</code></td>
+    <td>Text prepended to each output filename. Files are named
+        <code>&lt;prefix&gt;_YYYYMMDD_HHMMSS_mmm.csv</code> (or <code>.h5</code>
+        for HDF5).</td>
+  </tr>
+  <tr>
+    <td>Output format</td>
+    <td>CSV</td>
+    <td>File format for acquired data. <strong>CSV</strong> produces human-readable
+        text files that can be opened in any editor or spreadsheet.
+        <strong>HDF5</strong> produces compact binary files that are much faster to
+        read back programmatically &mdash; useful when vibetest-analyzer is processing
+        files in real time as they are generated. See
+        <a href="csv-format.html">Output Formats</a> for details on both.</td>
+  </tr>
+  <tr>
+    <td>Requested rate</td>
+    <td>5000&nbsp;Hz</td>
+    <td>Desired sample rate in Hertz. Valid range: 1,000&ndash;51,200&nbsp;Hz. The
+        hardware may use a slightly different rate; the actual rate is shown in the
+        Status section once recording begins.</td>
+  </tr>
+  <tr>
+    <td>Block duration</td>
+    <td>10&nbsp;s</td>
+    <td>Length of each data block in seconds. Each block produces one CSV file. Valid
+        range: 1&ndash;3,600&nbsp;s.</td>
+  </tr>
+  <tr>
+    <td>Sensitivity</td>
+    <td>100&nbsp;mV/g</td>
+    <td>Accelerometer sensitivity. Check the datasheet for your sensors and set this
+        to match.</td>
+  </tr>
+  <tr>
+    <td>IEPE excitation</td>
+    <td>0.004&nbsp;A (4&nbsp;mA)</td>
+    <td>Constant-current excitation supplied to the IEPE sensors. The NI&nbsp;9230
+        typically accepts 0&nbsp;A (off) or 0.004&nbsp;A.</td>
+  </tr>
+  <tr>
+    <td>Module 1 / Module 2 device</td>
+    <td><code>cDAQ1Mod1</code> / <code>cDAQ1Mod2</code></td>
+    <td>NI-DAQmx device names for the two NI&nbsp;9230 modules. These must match
+        what NI MAX reports.</td>
+  </tr>
+  <tr>
+    <td>File count</td>
+    <td>10</td>
+    <td>Number of files (blocks) to record when <em>Continuous</em> is unchecked.
+        After this many files are written, acquisition stops automatically.</td>
+  </tr>
+  <tr>
+    <td>Continuous</td>
+    <td>Checked</td>
+    <td>When checked, acquisition runs indefinitely until you press Stop. When
+        unchecked, it stops after the specified file count.</td>
+  </tr>
+</table>
+
+<div class="warning">
+  <strong>All settings are locked while recording.</strong> You must stop the current
+  acquisition before changing any parameter. This prevents accidental mid-run
+  configuration changes that could produce inconsistent data.
+</div>
+
+<h2>Metadata Summary</h2>
+
+<p>Below the acquisition settings is a read-only <strong>Metadata Summary</strong>
+panel. It shows a compact preview of the current test identity, DUT information,
+active channels, and notes &mdash; so you can confirm the metadata is correct without
+switching to the Metadata tab.</p>
+
+<div class="example">
+  <strong>Example summary:</strong><br>
+  Test: FAN-SWEEP-001<br>
+  DUT: Acme VX-10 SN-42<br>
+  Setup: Stand A | J. Smith | Lab 3<br>
+  Channels: Mod1_Ch0=Top X; Mod1_Ch1=Top Y; Mod1_Ch2=Top Z<br>
+  Notes: Baseline run, no load
+</div>
+
+<h2>Start and Stop</h2>
+
+<p>The two transport buttons control the acquisition lifecycle:</p>
+
+<ul>
+  <li><strong>Start Acquisition</strong> &mdash; validates that at least one channel
+      is enabled, saves all current settings, then connects to the DAQ hardware and
+      begins recording. The button is disabled while recording.</li>
+  <li><strong>Stop</strong> &mdash; signals the acquisition to halt after the current
+      block finishes writing. Enabled only while recording.</li>
+</ul>
+
+<p>Acquisition runs in a background thread, so the GUI remains responsive while data
+is being captured.</p>
+
+<h2>Status Section</h2>
+
+<p>The Status group shows real-time information about the running acquisition:</p>
+
+<table>
+  <tr><th>Field</th><th>Description</th></tr>
+  <tr><td>State</td><td><code>Idle</code>, <code>Starting</code>, <code>Recording</code>, <code>Stopping</code>, or <code>Error</code></td></tr>
+  <tr><td>Actual rate</td><td>The sample rate the hardware is actually using (may differ slightly from the requested rate)</td></tr>
+  <tr><td>Blocks written</td><td>Running count of CSV files saved so far</td></tr>
+  <tr><td>Elapsed</td><td>Wall-clock time since acquisition started, shown as <code>H:MM:SS</code></td></tr>
+  <tr><td>Last file</td><td>Filename of the most recently written CSV</td></tr>
+</table>
+
+<h2>Channel Level Meters</h2>
+
+<p>At the bottom of the Acquire tab, six horizontal bar meters show the <strong>peak
+acceleration</strong> (in <em>g</em>) for each channel during each block. The meters
+update once per block.</p>
+
+<h3>Color coding</h3>
+<table>
+  <tr><th>Color</th><th>Meaning</th></tr>
+  <tr><td style="color:#27ae60;font-weight:bold;">Green</td><td>Peak is below 50% of full scale</td></tr>
+  <tr><td style="color:#e67e22;font-weight:bold;">Amber</td><td>Peak is between 50% and 80% of full scale</td></tr>
+  <tr><td style="color:#c0392b;font-weight:bold;">Red</td><td>Peak exceeds 80% of full scale &mdash; the sensor may be close to clipping</td></tr>
+</table>
+
+<h3>Full scale control</h3>
+<p>The <strong>Full scale</strong> spinner above the meters sets the reference level
+(in <em>g</em>) used for the color thresholds. Adjust it to match the expected
+vibration amplitude of your test. For example, if you expect peaks around
+0.5&nbsp;g, set full scale to 1.0&nbsp;g so the meters use the full bar
+range.</p>
+
+<div class="note">
+  <strong>Note:</strong> Disabled channels show "off" instead of a meter bar.
+  Only channels enabled on the <a href="channels.html">Channels tab</a> display
+  live readings.
+</div>
+
+<h2>Settings Persistence</h2>
+
+<p>All GUI settings &mdash; acquisition parameters, metadata fields, and channel
+configuration &mdash; are saved automatically when you press <strong>Start</strong>
+or close the window. The next time you open the application, your previous settings
+are restored. This is handled by Qt's <code>QSettings</code> system, which stores
+values in a platform-appropriate location (the Windows registry, macOS preferences,
+or an INI file on Linux).</p>
+
+<div class="next">
+  Next: <a href="metadata.html">Metadata</a> &mdash; recording test identity and
+  device-under-test information.
+</div>
+
+</main>
+</body>
+</html>

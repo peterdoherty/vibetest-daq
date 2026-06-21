@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Troubleshooting &mdash; Vibetest DAQ Manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Troubleshooting</h1>
+  <p>Solutions to common problems you may encounter when setting up or running Vibetest DAQ.</p>
+</header>
+
+<nav>
+  <a href="index.html">Home</a>
+  <a href="getting-started.html">Getting Started</a>
+  <a href="gui-overview.html">GUI Overview</a>
+  <a href="metadata.html">Metadata</a>
+  <a href="channels.html">Channels</a>
+  <a href="cli.html">Command Line</a>
+  <a href="csv-format.html">Output Formats</a>
+  <a href="troubleshooting.html">Troubleshooting</a>
+</nav>
+
+<main>
+
+<h2>Installation Problems</h2>
+
+<h3>"nidaqmx not available" error on start</h3>
+
+<p>This means the Python <code>nidaqmx</code> package cannot find the NI-DAQmx C
+driver. The driver must be installed separately from the Python package.</p>
+
+<ol>
+  <li>Install the NI-DAQmx driver from NI Package Manager or ni.com.</li>
+  <li>Reboot after installation.</li>
+  <li>Verify that NI MAX can see your hardware.</li>
+  <li>Then run <code>pip install -e .</code> again to ensure <code>nidaqmx</code> can
+      link to the driver.</li>
+</ol>
+
+<h3>PySide6 / Qt import errors</h3>
+
+<p>If the GUI fails to start with an import error related to PySide6 or Qt, check
+that:</p>
+
+<ul>
+  <li>You are using Python 3.10 or later.</li>
+  <li>PySide6 is installed: <code>pip install PySide6</code></li>
+  <li>On Linux, the system may need additional Qt runtime libraries (e.g.,
+      <code>libxcb</code>, <code>libgl1</code>).</li>
+</ul>
+
+<h2>Hardware Connection Issues</h2>
+
+<h3>Device name mismatch</h3>
+
+<p>If the acquisition starts but immediately reports an error about an unknown
+device, the device names in the application do not match what NI MAX shows.</p>
+
+<ol>
+  <li>Open NI MAX and expand <em>Devices and Interfaces</em>.</li>
+  <li>Note the exact device names (e.g., <code>cDAQ1Mod1</code>,
+      <code>cDAQ1Mod2</code>).</li>
+  <li>In the GUI, enter these names in the <em>Module 1 device</em> and
+      <em>Module 2 device</em> fields on the Acquire tab.</li>
+  <li>For the CLI, edit the <code>MODULE_1_DEVICE</code> and
+      <code>MODULE_2_DEVICE</code> constants in <code>daq.py</code>.</li>
+</ol>
+
+<div class="note">
+  <strong>Tip:</strong> If you have multiple cDAQ chassis connected, the device names
+  may be numbered differently than expected (e.g., <code>cDAQ2Mod1</code> instead of
+  <code>cDAQ1Mod1</code>). Always check NI MAX.
+</div>
+
+<h3>USB disconnection during recording</h3>
+
+<p>If the USB cable is disconnected during an acquisition, the current block read
+will fail with a DAQ error. The GUI will show the error in a dialog and stop recording.
+All previously written CSV files are intact. Reconnect the chassis and start a new
+acquisition.</p>
+
+<h2>Sample Rate Issues</h2>
+
+<h3>Actual rate differs from requested rate</h3>
+
+<p>The NI&nbsp;9230 derives its sample clock from internal dividers, so it can only
+produce certain exact rates. When you request a rate that is not achievable, the
+hardware silently rounds to the nearest supported value.</p>
+
+<p>The application handles this correctly:</p>
+<ul>
+  <li>The GUI shows the actual rate in the Status section and status bar.</li>
+  <li>The CSV header records the actual rate, not the requested rate.</li>
+  <li>Block timestamps are computed using the actual rate.</li>
+</ul>
+
+<p>If the offset is large enough to affect your analysis, either choose a rate that
+the hardware supports exactly, or account for the actual rate in your post-processing.</p>
+
+<div class="warning">
+  <strong>Why this matters:</strong> If downstream spectral analysis uses the
+  <em>requested</em> rate instead of the <em>actual</em> rate from the CSV header,
+  all frequency values will be off by a proportional amount. Always read the sample
+  rate from the file header.
+</div>
+
+<h2>Data Quality Issues</h2>
+
+<h3>Level meters always show zero</h3>
+
+<p>If the level meters stay at zero during recording:</p>
+<ul>
+  <li>Check that the accelerometers are connected to the correct module inputs.</li>
+  <li>Verify that IEPE excitation is set to 0.004&nbsp;A (not 0). A value of 0
+      disables the constant-current source, and the sensors will not produce a
+      signal.</li>
+  <li>Tap gently on the sensor to confirm it responds.</li>
+</ul>
+
+<h3>Level meters are red / signal looks saturated</h3>
+
+<p>Red meters or flat-topped waveforms indicate the signal is clipping. Possible
+causes:</p>
+<ul>
+  <li>The full-scale meter range is set too low &mdash; increase it to see if the
+      actual peak is reasonable.</li>
+  <li>The vibration level genuinely exceeds the sensor/module range. You may need a
+      less sensitive accelerometer for high-<em>g</em> measurements.</li>
+  <li>The sensitivity is set incorrectly. If the sensitivity value is too low,
+      the computed <em>g</em> values will be artificially high. Double-check the
+      sensor's datasheet.</li>
+</ul>
+
+<h3>Unexpected data values or noisy signal</h3>
+
+<ul>
+  <li>Make sure the <strong>sensitivity</strong> setting matches your sensor. The
+      wrong value will scale all readings by the wrong factor.</li>
+  <li>Check cable connections for loose BNC or LEMO connectors.</li>
+  <li>Verify that the sensor is securely mounted. A loose sensor will rattle and
+      produce spurious high-frequency noise.</li>
+</ul>
+
+<h2>File and Disk Issues</h2>
+
+<h3>Output directory errors</h3>
+
+<p>If the application cannot write to the output directory:</p>
+<ul>
+  <li>Make sure the path is valid and you have write permissions.</li>
+  <li>On network drives, check that the connection is stable &mdash; intermittent
+      network drops will cause write failures.</li>
+  <li>Prefer a local disk for the output directory to minimize latency. Slow writes
+      can cause the hardware buffer to overflow.</li>
+</ul>
+
+<h3>Running out of disk space</h3>
+
+<p>At 5&nbsp;kHz with 6 channels, the application writes roughly 30&nbsp;MB per
+minute. A one-hour recording produces about 1.8&nbsp;GB. Monitor your available disk
+space for long acquisitions. The application will report a write error if the disk
+is full, but previously saved files are not affected.</p>
+
+<h2>GUI-Specific Issues</h2>
+
+<h3>Settings not restoring on launch</h3>
+
+<p>Settings are stored using Qt's <code>QSettings</code> system. On Windows, this
+uses the registry. On macOS, it uses the preferences system. If settings are not
+restoring:</p>
+<ul>
+  <li>Check that the application was closed normally (not killed via Task Manager).
+      Settings are saved on close and on start, so a hard kill before the first
+      acquisition may not save the latest changes.</li>
+  <li>Try resetting by clearing the Qt settings. On Windows, look for
+      <code>HKEY_CURRENT_USER\Software\vibetest\daq</code> in the registry editor.</li>
+</ul>
+
+<h3>"No channels selected" warning</h3>
+
+<p>You tried to start an acquisition with all channels disabled. Go to the
+<a href="channels.html">Channels tab</a> and enable at least one channel.</p>
+
+<h2>HDF5-Specific Issues</h2>
+
+<h3>h5py import error</h3>
+
+<p>If you see an error about <code>h5py</code> not being found when selecting HDF5
+format, reinstall the package:</p>
+
+<pre><code>pip install -e .</code></pre>
+
+<p>This will install <code>h5py</code> along with the other dependencies. On some
+systems, <code>h5py</code> requires the HDF5 C library; pip installs a bundled
+version automatically on most platforms.</p>
+
+<h3>Cannot open HDF5 files</h3>
+
+<p>HDF5 files are binary and cannot be viewed in a text editor. To inspect them:</p>
+
+<ul>
+  <li><strong>HDFView</strong> &mdash; a free GUI viewer from The HDF Group.</li>
+  <li><strong>h5dump</strong> &mdash; a command-line tool included with the HDF5
+      library (<code>h5dump -A file.h5</code> shows attributes,
+      <code>h5dump -d data file.h5</code> shows dataset contents).</li>
+  <li><strong>Python</strong> &mdash; a few lines with <code>h5py</code> (see
+      <a href="csv-format.html">Output Formats</a> for examples).</li>
+</ul>
+
+<h2>Getting Help</h2>
+
+<p>If you encounter an issue not covered here:</p>
+<ol>
+  <li>Check the terminal or console output for error messages &mdash; they often
+      include specific NI-DAQmx error codes that you can look up in the NI
+      documentation.</li>
+  <li>Verify your hardware setup in NI MAX by running a test acquisition using NI's
+      built-in tools.</li>
+  <li>Review the <a href="csv-format.html">Output Formats</a> page to make sure you are
+      parsing the output files correctly (CSV and HDF5 have different loading
+      methods).</li>
+</ol>
+
+<div class="next">
+  Back to: <a href="index.html">Manual Home</a>
+</div>
+
+</main>
+</body>
+</html>

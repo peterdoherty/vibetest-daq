@@ -49,6 +49,7 @@ MAX_VOLTAGE = 5.0  # V    (NI 9230 input range)
 
 OUTPUT_DIR = "vibration_data"
 FILE_PREFIX = "vib"
+OUTPUT_FORMAT = "csv"
 LOG_LEVEL = logging.INFO
 
 # ── Derived constants ─────────────────────────────────────────────────────────
@@ -126,6 +127,34 @@ def write_block(data: np.ndarray, ts: datetime.datetime, fs: float):
         comments="",
         fmt="%.6f," + ",".join(["%.8g"] * n_ch),
     )
+    log.info("Saved %s  (%d samples × %d channels)", path, n_samp, n_ch)
+    return path
+
+
+def write_block_hdf5(data: np.ndarray, ts: datetime.datetime, fs: float):
+    import h5py
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    path = os.path.join(OUTPUT_DIR, f"{FILE_PREFIX}_{stamp}.h5")
+
+    n_ch, n_samp = data.shape
+    t0_epoch = ts.timestamp()
+    t_axis = t0_epoch + np.arange(n_samp) / fs
+
+    with h5py.File(path, "w") as f:
+        f.attrs["block_start_utc"] = ts.isoformat()
+        f.attrs["block_start_epoch_s"] = t0_epoch
+        f.attrs["sample_rate_hz"] = fs
+        f.attrs["n_samples"] = n_samp
+        f.attrs["n_channels"] = n_ch
+        f.attrs["sensitivity_mv_per_g"] = SENSITIVITY
+        f.attrs["units"] = "g"
+        f.attrs["channel_labels"] = CHANNEL_LABELS[:n_ch]
+
+        f.create_dataset("time_epoch_s", data=t_axis)
+        f.create_dataset("data", data=data.T)
+
     log.info("Saved %s  (%d samples × %d channels)", path, n_samp, n_ch)
     return path
 
@@ -220,7 +249,10 @@ def run_acquisition(duration_s: float | None = None):
                 log.error("DAQ read error: %s", exc)
                 break
 
-            write_block(buf.copy(), block_ts, actual_fs)
+            if OUTPUT_FORMAT == "hdf5":
+                write_block_hdf5(buf.copy(), block_ts, actual_fs)
+            else:
+                write_block(buf.copy(), block_ts, actual_fs)
             n_blocks += 1
 
         task.stop()
@@ -231,7 +263,7 @@ def run_acquisition(duration_s: float | None = None):
 
 
 def main():
-    global OUTPUT_DIR, SAMPLE_RATE, SAMPLES_PER_BLOCK
+    global OUTPUT_DIR, OUTPUT_FORMAT, SAMPLE_RATE, SAMPLES_PER_BLOCK
 
     parser = argparse.ArgumentParser(
         description="NI cDAQ vibration data acquisition — writes timestamped CSV files."
@@ -259,13 +291,22 @@ def main():
         metavar="HZ",
         help=f"Sample rate in Hz (default: {SAMPLE_RATE}).",
     )
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["csv", "hdf5"],
+        default="csv",
+        help="Output file format (default: csv).",
+    )
     args = parser.parse_args()
 
     OUTPUT_DIR = args.output
+    OUTPUT_FORMAT = args.format
     SAMPLE_RATE = args.rate
     SAMPLES_PER_BLOCK = int(SAMPLE_RATE * BLOCK_DURATION)
 
     log.info("Output directory : %s", OUTPUT_DIR)
+    log.info("Output format    : %s", OUTPUT_FORMAT)
     log.info("Sample rate      : %.0f Hz", SAMPLE_RATE)
     log.info(
         "Block duration   : %.1f s  (%d samples)", BLOCK_DURATION, SAMPLES_PER_BLOCK

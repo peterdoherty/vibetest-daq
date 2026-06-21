@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Metadata &mdash; Vibetest DAQ Manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Metadata</h1>
+  <p>The Metadata tab lets you document your test setup so every CSV file carries full context.</p>
+</header>
+
+<nav>
+  <a href="index.html">Home</a>
+  <a href="getting-started.html">Getting Started</a>
+  <a href="gui-overview.html">GUI Overview</a>
+  <a href="metadata.html">Metadata</a>
+  <a href="channels.html">Channels</a>
+  <a href="cli.html">Command Line</a>
+  <a href="csv-format.html">Output Formats</a>
+  <a href="troubleshooting.html">Troubleshooting</a>
+</nav>
+
+<main>
+
+<h2>Why Metadata Matters</h2>
+
+<p>When you look at a vibration CSV file weeks or months later, the raw numbers alone
+do not tell you <em>what</em> was being tested, <em>how</em> the sensors were mounted,
+or <em>who</em> ran the test. The Metadata tab captures this context at acquisition
+time and writes it directly into the CSV file headers. This makes every file
+self-describing and eliminates the need for separate log sheets.</p>
+
+<h2>System Metadata Fields</h2>
+
+<p>The Metadata tab contains the following fields. All are optional, but filling them
+in is strongly recommended.</p>
+
+<table>
+  <tr><th>Field</th><th>Purpose</th><th>Example</th></tr>
+  <tr>
+    <td>Test ID</td>
+    <td>A unique identifier for this test or test series. Use whatever naming
+        convention your team follows.</td>
+    <td><code>FAN-SWEEP-001</code></td>
+  </tr>
+  <tr>
+    <td>DUT make</td>
+    <td>Manufacturer of the device under test.</td>
+    <td><code>Acme</code></td>
+  </tr>
+  <tr>
+    <td>DUT model</td>
+    <td>Model number or name of the device under test.</td>
+    <td><code>VX-10</code></td>
+  </tr>
+  <tr>
+    <td>DUT serial</td>
+    <td>Serial number of the specific unit being tested.</td>
+    <td><code>SN-0042</code></td>
+  </tr>
+  <tr>
+    <td>Test stand</td>
+    <td>Which test fixture or stand the DUT is mounted on.</td>
+    <td><code>Stand A</code></td>
+  </tr>
+  <tr>
+    <td>Operator</td>
+    <td>Name of the person running the test.</td>
+    <td><code>J. Smith</code></td>
+  </tr>
+  <tr>
+    <td>Location</td>
+    <td>Physical location where the test is taking place.</td>
+    <td><code>Lab 3, Building 60</code></td>
+  </tr>
+  <tr>
+    <td>Notes</td>
+    <td>Free-form text for anything else &mdash; test intent, fixture
+        configuration, environmental conditions, known issues, etc. Multi-line
+        text is supported.</td>
+    <td><code>Baseline run, no load, 22&deg;C ambient</code></td>
+  </tr>
+</table>
+
+<h2>How Metadata Appears in CSV Files</h2>
+
+<p>Each non-empty metadata field is written as a comment line in the CSV header. For
+example:</p>
+
+<pre><code># NI cDAQ-9174 / NI 9230 Vibration Data
+# Block start (UTC): 2026-05-20T18:30:00
+# Sample rate (Hz):  5000.0
+# Channels:          6
+# Sensitivity (mV/g):100.0
+# Units:             g (acceleration)
+# Test ID: FAN-SWEEP-001
+# DUT Make: Acme
+# DUT Model: VX-10
+# DUT Serial Number: SN-0042
+# Test Stand: Stand A
+# Operator: J. Smith
+# Location: Lab 3, Building 60
+# Test Notes: Baseline run, no load | 22C ambient</code></pre>
+
+<div class="note">
+  <strong>Note:</strong> Multi-line notes are collapsed to a single line in the CSV
+  header, with line breaks replaced by <code>|</code> pipe characters. This keeps the
+  CSV file easy to parse while preserving the full note text.
+</div>
+
+<h2>Metadata Summary on the Acquire Tab</h2>
+
+<p>You do not need to switch to the Metadata tab to verify your entries. The
+<strong>Metadata Summary</strong> panel on the Acquire tab updates in real time as you
+type. It shows a compact view of the test ID, DUT, setup details, active channels,
+and notes &mdash; so you can confirm everything looks right before pressing Start.</p>
+
+<p>Long notes are truncated to 120 characters in the summary display, but the full
+text is always written to the CSV files.</p>
+
+<h2>Persistence</h2>
+
+<p>All metadata fields are saved automatically when you start an acquisition or close
+the application. The next time you open the GUI, the fields are pre-filled with their
+previous values. This is convenient when running multiple tests on the same DUT
+&mdash; just update the fields that changed (such as the test ID or notes) and leave
+the rest.</p>
+
+<div class="warning">
+  <strong>Remember to update metadata between tests.</strong> Because fields persist,
+  it is easy to accidentally record a new test with the previous test's metadata. Get
+  in the habit of reviewing the Metadata Summary on the Acquire tab before each run.
+</div>
+
+<div class="next">
+  Next: <a href="channels.html">Channels</a> &mdash; enabling, disabling, and
+  labeling individual measurement channels.
+</div>
+
+</main>
+</body>
+</html>

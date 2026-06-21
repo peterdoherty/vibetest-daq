@@ -13,6 +13,7 @@ authors = [
     { name = "Vibetest" },
 ]
 dependencies = [
+    "h5py>=3.9",
     "nidaqmx>=1.0",
     "numpy>=1.24",
     "PySide6>=6.5",

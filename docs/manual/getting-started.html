@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting Started &mdash; Vibetest DAQ Manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Getting Started</h1>
+  <p>Install the software and verify that your hardware is recognized.</p>
+</header>
+
+<nav>
+  <a href="index.html">Home</a>
+  <a href="getting-started.html">Getting Started</a>
+  <a href="gui-overview.html">GUI Overview</a>
+  <a href="metadata.html">Metadata</a>
+  <a href="channels.html">Channels</a>
+  <a href="cli.html">Command Line</a>
+  <a href="csv-format.html">Output Formats</a>
+  <a href="troubleshooting.html">Troubleshooting</a>
+</nav>
+
+<main>
+
+<h2>Prerequisites</h2>
+
+<table>
+  <tr><th>Requirement</th><th>Minimum version</th><th>Where to get it</th></tr>
+  <tr><td>Python</td><td>3.10</td><td>python.org or your system package manager</td></tr>
+  <tr><td>NI-DAQmx driver</td><td>Latest</td><td>NI Package Manager (Windows) or ni.com</td></tr>
+  <tr><td>NI cDAQ-9174 + NI 9230 modules</td><td>&mdash;</td><td>Connected via USB and visible in NI MAX</td></tr>
+</table>
+
+<div class="warning">
+  <strong>Important:</strong> The NI-DAQmx driver must be installed <em>before</em>
+  you install the Python package. Without the driver, the <code>nidaqmx</code> Python
+  library cannot communicate with the hardware.
+</div>
+
+<h2>Step 1 &mdash; Verify Hardware in NI MAX</h2>
+
+<p>Open <strong>NI Measurement &amp; Automation Explorer</strong> (NI MAX) and expand
+<em>Devices and Interfaces</em>. You should see your cDAQ chassis and both NI&nbsp;9230
+modules listed. Note the device names &mdash; they will look like
+<code>cDAQ1Mod1</code> and <code>cDAQ1Mod2</code>. You will need these names in the
+application settings.</p>
+
+<div class="note">
+  <strong>Tip:</strong> If the modules do not appear, try a different USB port, check
+  the cable, and make sure the NI-DAQmx driver is installed.
+</div>
+
+<h2>Step 2 &mdash; Create a Virtual Environment</h2>
+
+<p>It is good practice to install Python packages in a virtual environment rather
+than system-wide. Open a terminal and run:</p>
+
+<pre><code>python -m venv .venv</code></pre>
+
+<p>Activate the environment:</p>
+
+<table>
+  <tr><th>Platform</th><th>Command</th></tr>
+  <tr><td>Windows (PowerShell)</td><td><code>.venv\Scripts\Activate.ps1</code></td></tr>
+  <tr><td>Windows (cmd)</td><td><code>.venv\Scripts\activate.bat</code></td></tr>
+  <tr><td>macOS / Linux</td><td><code>source .venv/bin/activate</code></td></tr>
+</table>
+
+<h2>Step 3 &mdash; Install the Package</h2>
+
+<p>From the root of the <code>vibetest-daq</code> repository, install in editable
+mode so that changes to the source take effect immediately:</p>
+
+<pre><code>python -m pip install -e .</code></pre>
+
+<p>This installs three main dependencies automatically:</p>
+
+<ul>
+  <li><code>nidaqmx</code> &mdash; Python bindings for the NI-DAQmx C driver</li>
+  <li><code>numpy</code> &mdash; numerical array library used for data handling</li>
+  <li><code>PySide6</code> &mdash; Qt 6 bindings for the graphical interface</li>
+</ul>
+
+<p>If you plan to run the linter or tests, install the development extras too:</p>
+
+<pre><code>python -m pip install -e ".[dev]"</code></pre>
+
+<h2>Step 4 &mdash; Launch the Application</h2>
+
+<p>Start the <strong>GUI</strong>:</p>
+
+<pre><code>vibetest-daq-gui</code></pre>
+
+<p>Or run a <strong>command-line acquisition</strong>:</p>
+
+<pre><code>vibetest-daq --output vibration_data --rate 5000</code></pre>
+
+<p>If the GUI window appears and shows "Ready", the installation is complete.</p>
+
+<h2>Step 5 &mdash; First Acquisition</h2>
+
+<ol>
+  <li>In the GUI, confirm that <em>Module 1 device</em> and <em>Module 2 device</em>
+      match the names you saw in NI MAX.</li>
+  <li>Choose an output directory using the <strong>Browse</strong> button.</li>
+  <li>Leave the sample rate at 5000&nbsp;Hz and block duration at 10&nbsp;s for a
+      quick test.</li>
+  <li>Press <strong>Start Acquisition</strong>.</li>
+  <li>Watch the level meters respond to vibration. After a few blocks, press
+      <strong>Stop</strong>.</li>
+  <li>Open the output directory and inspect the CSV files.</li>
+</ol>
+
+<div class="next">
+  Next: <a href="gui-overview.html">GUI Overview</a> &mdash; a detailed tour of the
+  Acquire tab and its controls.
+</div>
+
+</main>
+</body>
+</html>

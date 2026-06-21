@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Command Line &mdash; Vibetest DAQ Manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Command Line Interface</h1>
+  <p>Run acquisitions from a terminal for scripted, automated, or unattended recording.</p>
+</header>
+
+<nav>
+  <a href="index.html">Home</a>
+  <a href="getting-started.html">Getting Started</a>
+  <a href="gui-overview.html">GUI Overview</a>
+  <a href="metadata.html">Metadata</a>
+  <a href="channels.html">Channels</a>
+  <a href="cli.html">Command Line</a>
+  <a href="csv-format.html">Output Formats</a>
+  <a href="troubleshooting.html">Troubleshooting</a>
+</nav>
+
+<main>
+
+<h2>When to Use the CLI</h2>
+
+<p>The command-line interface (<code>vibetest-daq</code>) is a simpler alternative to
+the GUI. It records data from all six channels using a fixed configuration and writes
+CSV files to disk until you stop it. Use it when:</p>
+
+<ul>
+  <li>You want to run an acquisition from a script or batch file.</li>
+  <li>You need unattended recording on a headless machine (no display).</li>
+  <li>You prefer the simplicity of a terminal over a graphical interface.</li>
+</ul>
+
+<div class="note">
+  <strong>Note:</strong> The CLI always records all six channels and does not support
+  metadata fields or per-channel labels. If you need those features, use the
+  <a href="gui-overview.html">GUI</a>.
+</div>
+
+<h2>Basic Usage</h2>
+
+<pre><code>vibetest-daq [OPTIONS]</code></pre>
+
+<h2>Options</h2>
+
+<table>
+  <tr><th>Option</th><th>Default</th><th>Description</th></tr>
+  <tr>
+    <td><code>-d</code>, <code>--duration SECONDS</code></td>
+    <td>None (run forever)</td>
+    <td>Stop recording after this many seconds. If omitted, the acquisition runs
+        until you press <kbd>Ctrl</kbd>+<kbd>C</kbd>.</td>
+  </tr>
+  <tr>
+    <td><code>-o</code>, <code>--output DIR</code></td>
+    <td><code>vibration_data</code></td>
+    <td>Directory where CSV files are written. Created automatically if it does not
+        exist.</td>
+  </tr>
+  <tr>
+    <td><code>-r</code>, <code>--rate HZ</code></td>
+    <td><code>5000</code></td>
+    <td>Requested sample rate in Hertz.</td>
+  </tr>
+  <tr>
+    <td><code>-f</code>, <code>--format csv|hdf5</code></td>
+    <td><code>csv</code></td>
+    <td>Output file format. Use <code>hdf5</code> for faster readback by downstream
+        analysis tools. See <a href="csv-format.html">Output Formats</a> for details
+        on both formats.</td>
+  </tr>
+</table>
+
+<h2>Examples</h2>
+
+<h3>Record for 60 seconds at 5 kHz</h3>
+
+<pre><code>vibetest-daq --duration 60 --output ./test_data --rate 5000</code></pre>
+
+<p>This creates approximately 60 CSV files (one per second, since the default block
+duration is 1&nbsp;s) in the <code>./test_data</code> directory.</p>
+
+<h3>Record indefinitely until interrupted</h3>
+
+<pre><code>vibetest-daq --output ./long_run</code></pre>
+
+<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop. The acquisition halts cleanly after the
+current block finishes writing.</p>
+
+<h3>Record at a higher sample rate</h3>
+
+<pre><code>vibetest-daq --rate 12800 --output ./highrate_data</code></pre>
+
+<h3>Record in HDF5 format</h3>
+
+<pre><code>vibetest-daq --format hdf5 --output ./test_data</code></pre>
+
+<p>Output files will have a <code>.h5</code> extension instead of <code>.csv</code>.
+The data content is identical; only the container format differs.</p>
+
+<h2>CLI vs. GUI Differences</h2>
+
+<table>
+  <tr><th>Feature</th><th>CLI</th><th>GUI</th></tr>
+  <tr><td>Output format</td><td>CSV or HDF5 (<code>--format</code>)</td><td>CSV or HDF5 (combo box)</td></tr>
+  <tr><td>Channel selection</td><td>All 6 channels, always</td><td>Enable/disable per channel</td></tr>
+  <tr><td>Block duration</td><td>Fixed at 1&nbsp;s</td><td>Configurable (1&ndash;3,600&nbsp;s)</td></tr>
+  <tr><td>System metadata</td><td>Not supported</td><td>Full metadata fields</td></tr>
+  <tr><td>Channel metadata</td><td>Not supported</td><td>Axis, location, sensor serial</td></tr>
+  <tr><td>Level meters</td><td>Not available</td><td>Live per-channel peak display</td></tr>
+  <tr><td>File count mode</td><td>Use <code>--duration</code></td><td>Continuous or fixed count</td></tr>
+  <tr><td>Settings persistence</td><td>None</td><td>Automatic save/restore</td></tr>
+  <tr><td>Stop method</td><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Stop button</td></tr>
+</table>
+
+<h2>Logging</h2>
+
+<p>The CLI prints log messages to the terminal as it runs. You will see messages for:</p>
+
+<ul>
+  <li>The configured output directory, sample rate, and block size.</li>
+  <li>The actual sample rate achieved by the hardware (with a warning if it differs
+      significantly from the requested rate).</li>
+  <li>Each CSV file written, with its path and dimensions.</li>
+  <li>Any DAQ errors that occur during recording.</li>
+</ul>
+
+<div class="example">
+<strong>Example output:</strong>
+<pre><code>2026-05-20 14:30:00  INFO      Output directory : ./test_data
+2026-05-20 14:30:00  INFO      Sample rate      : 5000 Hz
+2026-05-20 14:30:00  INFO      Block duration   : 1.0 s  (5000 samples)
+2026-05-20 14:30:00  INFO      Initialising NI-DAQmx task...
+2026-05-20 14:30:00  INFO      Sample rate: 5000.000000 Hz (requested 5000.00 Hz)
+2026-05-20 14:30:00  INFO      Acquisition started -- 5000.0000 Hz, 5000-sample blocks
+2026-05-20 14:30:01  INFO      Saved ./test_data/vib_20260520_143000_000.csv  (5000 samples x 6 channels)
+2026-05-20 14:30:02  INFO      Saved ./test_data/vib_20260520_143001_000.csv  (5000 samples x 6 channels)</code></pre>
+</div>
+
+<h2>Hardware Configuration</h2>
+
+<p>The CLI uses hardcoded values for several parameters that the GUI exposes as
+settings. If you need to change them, edit the constants at the top of
+<code>daq.py</code>:</p>
+
+<table>
+  <tr><th>Constant</th><th>Default</th><th>Purpose</th></tr>
+  <tr><td><code>MODULE_1_DEVICE</code></td><td><code>cDAQ1Mod1</code></td><td>NI-DAQmx name of the first module</td></tr>
+  <tr><td><code>MODULE_2_DEVICE</code></td><td><code>cDAQ1Mod2</code></td><td>NI-DAQmx name of the second module</td></tr>
+  <tr><td><code>SENSITIVITY</code></td><td><code>100.0</code> mV/g</td><td>Accelerometer sensitivity</td></tr>
+  <tr><td><code>IEPE_EXCITATION</code></td><td><code>0.004</code> A</td><td>Constant-current excitation</td></tr>
+  <tr><td><code>BLOCK_DURATION</code></td><td><code>1.0</code> s</td><td>Seconds per output file</td></tr>
+  <tr><td><code>MAX_VOLTAGE</code></td><td><code>5.0</code> V</td><td>NI 9230 input range</td></tr>
+  <tr><td><code>FILE_PREFIX</code></td><td><code>vib</code></td><td>Output filename prefix</td></tr>
+</table>
+
+<div class="next">
+  Next: <a href="csv-format.html">Output Formats</a> &mdash; understanding the structure
+  of the output files.
+</div>
+
+</main>
+</body>
+</html>

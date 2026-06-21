@@ -23,6 +23,7 @@ from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QSpinBox,
     QFileDialog,
@@ -150,6 +151,59 @@ def _write_block(
     return path
 
 
+def _write_block_hdf5(
+    data,
+    ts,
+    fs,
+    output_dir,
+    file_prefix,
+    channel_labels,
+    sensitivity,
+    system_metadata=None,
+    channel_metadata=None,
+    _t_offsets=None,
+):
+    import h5py
+
+    system_metadata = system_metadata or {}
+    channel_metadata = channel_metadata or []
+    os.makedirs(output_dir, exist_ok=True)
+    stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    path  = os.path.join(output_dir, f"{file_prefix}_{stamp}.h5")
+
+    n_ch, n_samp = data.shape
+    t0_epoch = ts.timestamp()
+    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
+    t_axis = t0_epoch + t_offsets
+
+    with h5py.File(path, "w") as f:
+        f.attrs["block_start_utc"] = ts.isoformat()
+        f.attrs["block_start_epoch_s"] = t0_epoch
+        f.attrs["sample_rate_hz"] = fs
+        f.attrs["n_samples"] = n_samp
+        f.attrs["n_channels"] = n_ch
+        f.attrs["sensitivity_mv_per_g"] = sensitivity
+        f.attrs["units"] = "g"
+        f.attrs["channel_labels"] = channel_labels
+
+        for key in ("test_id", "dut_make", "dut_model", "dut_serial",
+                     "test_stand", "operator", "location", "notes"):
+            value = str(system_metadata.get(key, "")).strip()
+            if value:
+                f.attrs[key] = value
+
+        f.create_dataset("time_epoch_s", data=t_axis)
+        ds = f.create_dataset("data", data=data.T)
+
+        for ch_label, ch_meta in zip(channel_labels, channel_metadata, strict=False):
+            for key in ("axis", "location", "sensor_serial"):
+                value = str(ch_meta.get(key, "")).strip()
+                if value:
+                    ds.attrs[f"{ch_label}_{key}"] = value
+
+    return path
+
+
 # ── DAQ worker (runs in a QThread) ───────────────────────────────────────────
 
 class DaqWorker(QObject):
@@ -238,6 +292,7 @@ class DaqWorker(QObject):
             _t_offsets = np.arange(samps) / actual_fs
             _out_buf   = np.empty((samps, n_ch + 1), dtype=np.float64)
             _fmt       = "%.6f," + ",".join(["%.8g"] * n_ch)
+            output_format = cfg.get("output_format", "csv")
 
             # Writer thread: CSV writes are decoupled from the read loop so the
             # hardware buffer never stalls waiting for disk I/O.
@@ -251,14 +306,22 @@ class DaqWorker(QObject):
                         break
                     blk_n, blk_data, blk_ts = item
                     try:
-                        path = _write_block(
-                            blk_data, blk_ts, actual_fs,
-                            output_dir, file_prefix, ch_labels, sensitivity,
-                            system_meta, channel_meta,
-                            _t_offsets=_t_offsets,
-                            _out_buf=_out_buf,
-                            _fmt=_fmt,
-                        )
+                        if output_format == "hdf5":
+                            path = _write_block_hdf5(
+                                blk_data, blk_ts, actual_fs,
+                                output_dir, file_prefix, ch_labels, sensitivity,
+                                system_meta, channel_meta,
+                                _t_offsets=_t_offsets,
+                            )
+                        else:
+                            path = _write_block(
+                                blk_data, blk_ts, actual_fs,
+                                output_dir, file_prefix, ch_labels, sensitivity,
+                                system_meta, channel_meta,
+                                _t_offsets=_t_offsets,
+                                _out_buf=_out_buf,
+                                _fmt=_fmt,
+                            )
                         peaks = np.max(np.abs(blk_data), axis=1).tolist()
                         result_queue.put((blk_n, path, peaks, None))
                     except Exception as exc:
@@ -443,6 +506,11 @@ class DaqController(QMainWindow):
         gc.addWidget(QLabel("File prefix:"), 1, 0)
         self.txt_prefix = QLineEdit(DEFAULT_FILE_PREFIX)
         gc.addWidget(self.txt_prefix, 1, 1)
+
+        gc.addWidget(QLabel("Output format:"), 1, 2)
+        self.cmb_format = QComboBox()
+        self.cmb_format.addItems(["CSV", "HDF5"])
+        gc.addWidget(self.cmb_format, 1, 3)
 
         gc.addWidget(QLabel("Requested rate:"), 2, 0)
         self.spn_rate = QDoubleSpinBox()
@@ -683,6 +751,7 @@ class DaqController(QMainWindow):
     def _settings_widgets(self):
         widgets = [
             self.txt_outdir, self.btn_browse, self.txt_prefix,
+            self.cmb_format,
             self.spn_rate, self.spn_block, self.spn_sens,
             self.spn_iepe, self.spn_file_count, self.chk_continuous,
             self.txt_mod1, self.txt_mod2,
@@ -787,6 +856,11 @@ class DaqController(QMainWindow):
         self._on_continuous_toggled(self.chk_continuous.isChecked())
         self.txt_mod1.setText(settings.value("acquisition/module_1", DEFAULT_MODULE_1))
         self.txt_mod2.setText(settings.value("acquisition/module_2", DEFAULT_MODULE_2))
+        fmt_idx = self.cmb_format.findText(
+            settings.value("acquisition/output_format", "CSV")
+        )
+        if fmt_idx >= 0:
+            self.cmb_format.setCurrentIndex(fmt_idx)
         self.spn_meter_range.setValue(float(settings.value("acquisition/meter_range_g", 1.0)))
         self.txt_test_id.setText(settings.value("system/test_id", ""))
         self.txt_dut_make.setText(settings.value("system/dut_make", ""))
@@ -823,6 +897,7 @@ class DaqController(QMainWindow):
         settings.setValue("acquisition/continuous", self.chk_continuous.isChecked())
         settings.setValue("acquisition/module_1", self.txt_mod1.text())
         settings.setValue("acquisition/module_2", self.txt_mod2.text())
+        settings.setValue("acquisition/output_format", self.cmb_format.currentText())
         settings.setValue("acquisition/meter_range_g", self.spn_meter_range.value())
         settings.setValue("system/test_id", self.txt_test_id.text())
         settings.setValue("system/dut_make", self.txt_dut_make.text())
@@ -902,8 +977,11 @@ class DaqController(QMainWindow):
             "file_prefix":     self.txt_prefix.text(),
             "channel_specs":   channel_specs,
             "system_metadata": self._system_metadata(),
-            "channel_metadata": self._channel_metadata(),            "continuous":      self.chk_continuous.isChecked(),
-            "file_count":      int(self.spn_file_count.value()),        }
+            "channel_metadata": self._channel_metadata(),
+            "output_format":   self.cmb_format.currentText().lower(),
+            "continuous":      self.chk_continuous.isChecked(),
+            "file_count":      int(self.spn_file_count.value()),
+        }
 
         self._worker = DaqWorker(config)
         self._thread = QThread()

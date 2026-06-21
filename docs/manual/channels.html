@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Channels &mdash; Vibetest DAQ Manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Channels</h1>
+  <p>Configure which channels are active and attach descriptive labels to each one.</p>
+</header>
+
+<nav>
+  <a href="index.html">Home</a>
+  <a href="getting-started.html">Getting Started</a>
+  <a href="gui-overview.html">GUI Overview</a>
+  <a href="metadata.html">Metadata</a>
+  <a href="channels.html">Channels</a>
+  <a href="cli.html">Command Line</a>
+  <a href="csv-format.html">Output Formats</a>
+  <a href="troubleshooting.html">Troubleshooting</a>
+</nav>
+
+<main>
+
+<h2>Channel Layout</h2>
+
+<p>The hardware provides six accelerometer input channels across two NI&nbsp;9230
+modules:</p>
+
+<table>
+  <tr><th>Channel name</th><th>Module</th><th>Physical input</th><th>Default axis</th></tr>
+  <tr><td>Mod1_Ch0</td><td>Module 1</td><td>ai0</td><td>X</td></tr>
+  <tr><td>Mod1_Ch1</td><td>Module 1</td><td>ai1</td><td>Y</td></tr>
+  <tr><td>Mod1_Ch2</td><td>Module 1</td><td>ai2</td><td>Z</td></tr>
+  <tr><td>Mod2_Ch0</td><td>Module 2</td><td>ai0</td><td>X</td></tr>
+  <tr><td>Mod2_Ch1</td><td>Module 2</td><td>ai1</td><td>Y</td></tr>
+  <tr><td>Mod2_Ch2</td><td>Module 2</td><td>ai2</td><td>Z</td></tr>
+</table>
+
+<h2>The Channels Tab</h2>
+
+<p>The Channels tab shows a table with one row per channel. Each row has the
+following columns:</p>
+
+<table>
+  <tr><th>Column</th><th>Description</th></tr>
+  <tr>
+    <td>Enable</td>
+    <td>A checkbox that includes or excludes this channel from the acquisition. When
+        unchecked, the channel is not configured on the hardware, no data is recorded
+        for it, and its level meter on the Acquire tab shows "off".</td>
+  </tr>
+  <tr>
+    <td>Channel</td>
+    <td>The fixed hardware channel name (e.g., <code>Mod1_Ch0</code>). This is
+        read-only.</td>
+  </tr>
+  <tr>
+    <td>Axis</td>
+    <td>The measurement axis label for this channel. Defaults to X, Y, or Z. You can
+        change this to match your sensor orientation or use any short label you
+        prefer.</td>
+  </tr>
+  <tr>
+    <td>Location</td>
+    <td>A free-text field describing where on the DUT this sensor is mounted. For
+        example: <code>Top plate</code>, <code>Base flange</code>,
+        <code>Motor housing</code>.</td>
+  </tr>
+  <tr>
+    <td>Sensor serial</td>
+    <td>The serial number of the physical accelerometer connected to this channel.
+        Useful for traceability when you need to know which sensor produced a
+        particular measurement.</td>
+  </tr>
+</table>
+
+<h2>How Channel Metadata Appears in CSV Files</h2>
+
+<p>Per-channel metadata is written into the CSV header as comment lines. Only
+non-empty fields are included:</p>
+
+<pre><code># Channel Mod1_Ch0 Axis: X
+# Channel Mod1_Ch0 Location: Top plate
+# Channel Mod1_Ch0 Sensor Serial: PCB-12345
+# Channel Mod1_Ch1 Axis: Y
+# Channel Mod1_Ch1 Location: Top plate
+# Channel Mod1_Ch1 Sensor Serial: PCB-12346</code></pre>
+
+<p>Downstream analysis software can parse these headers to label plots as "Top
+plate X" instead of the generic "Mod1_Ch0".</p>
+
+<h2>Enabling and Disabling Channels</h2>
+
+<p>You do not always need all six channels. If a test only uses three sensors (one
+triaxial accelerometer, for example), uncheck the unused channels. This has
+several benefits:</p>
+
+<ul>
+  <li>The CSV files are smaller because unused columns are omitted.</li>
+  <li>The NI-DAQmx task only configures the channels it needs, which can reduce
+      bus bandwidth.</li>
+  <li>The level meters on the Acquire tab only show active channels, reducing
+      visual clutter.</li>
+</ul>
+
+<div class="warning">
+  <strong>At least one channel must be enabled.</strong> If you try to start an
+  acquisition with all channels disabled, the application will show a warning
+  and refuse to start.
+</div>
+
+<h2>Channel Summary</h2>
+
+<p>The Metadata Summary on the Acquire tab includes a <strong>Channels</strong> line
+that shows a compact view of enabled channels and their axis/location labels:</p>
+
+<div class="example">
+  <strong>Example:</strong> Channels: Mod1_Ch0=Top plate X; Mod1_Ch1=Top plate Y; Mod1_Ch2=Top plate Z
+</div>
+
+<h2>Persistence</h2>
+
+<p>Channel enable states, axis labels, location descriptions, and sensor serial
+numbers are all saved automatically. When you reopen the application, each channel
+is restored to its previous configuration.</p>
+
+<div class="next">
+  Next: <a href="cli.html">Command Line</a> &mdash; running acquisitions without the
+  GUI.
+</div>
+
+</main>
+</body>
+</html>

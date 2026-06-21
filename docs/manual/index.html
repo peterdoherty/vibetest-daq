@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vibetest DAQ Manual</title>
+  <link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<header>
+  <h1>Vibetest DAQ Manual</h1>
+  <p>Vibration data acquisition for the NI&nbsp;cDAQ-9174 chassis and NI&nbsp;9230 IEPE accelerometer modules. Developed at the Smithsonian Astrophysical Observatory.</p>
+</header>
+
+<nav>
+  <a href="index.html">Home</a>
+  <a href="getting-started.html">Getting Started</a>
+  <a href="gui-overview.html">GUI Overview</a>
+  <a href="metadata.html">Metadata</a>
+  <a href="channels.html">Channels</a>
+  <a href="cli.html">Command Line</a>
+  <a href="csv-format.html">Output Formats</a>
+  <a href="troubleshooting.html">Troubleshooting</a>
+</nav>
+
+<main>
+
+<h2>What is Vibetest DAQ?</h2>
+
+<p>Vibetest DAQ is a data acquisition tool that records vibration measurements from
+IEPE (Integrated Electronics Piezo-Electric) accelerometers connected to National
+Instruments hardware. It saves each block of samples as a timestamped CSV file that
+you can later analyze with spectral analysis software, MATLAB, Python, or any tool
+that reads plain text.</p>
+
+<p>The package provides two ways to run an acquisition:</p>
+
+<ul>
+  <li><strong>GUI</strong> (<code>vibetest-daq-gui</code>) &mdash; a desktop application with
+      controls for all acquisition settings, test metadata, per-channel configuration,
+      and live level meters.</li>
+  <li><strong>Command line</strong> (<code>vibetest-daq</code>) &mdash; a headless script
+      suitable for automated or unattended recording.</li>
+</ul>
+
+<h2>Hardware at a Glance</h2>
+
+<table>
+  <tr><th>Component</th><th>Model</th><th>Role</th></tr>
+  <tr><td>Chassis</td><td>NI cDAQ-9174</td><td>USB carrier for C-Series modules</td></tr>
+  <tr><td>Analog input modules</td><td>NI 9230 (x2)</td><td>3-channel 24-bit IEPE accelerometer input, up to 12.8&nbsp;kS/s per channel</td></tr>
+  <tr><td>Sensors</td><td>Any IEPE accelerometer</td><td>Converts mechanical vibration to an analog voltage signal</td></tr>
+</table>
+
+<p>Each NI&nbsp;9230 module has three input channels, so two modules give you six
+channels total (Mod1_Ch0&ndash;Ch2, Mod2_Ch0&ndash;Ch2).</p>
+
+<h2>Table of Contents</h2>
+
+<ul class="toc">
+  <li><a href="getting-started.html">Getting Started</a> &mdash; install Python, drivers, and the package</li>
+  <li><a href="gui-overview.html">GUI Overview</a> &mdash; the Acquire tab, start/stop controls, status readouts, and level meters</li>
+  <li><a href="metadata.html">Metadata</a> &mdash; recording test identity, DUT info, and operator details</li>
+  <li><a href="channels.html">Channels</a> &mdash; enabling/disabling channels and adding per-channel labels</li>
+  <li><a href="cli.html">Command Line</a> &mdash; running acquisitions from a terminal without the GUI</li>
+  <li><a href="csv-format.html">Output Formats</a> &mdash; CSV and HDF5 output file structure</li>
+  <li><a href="troubleshooting.html">Troubleshooting</a> &mdash; common errors and how to fix them</li>
+</ul>
+
+<h2>Key Concepts</h2>
+
+<h3>IEPE Sensors</h3>
+<p>IEPE accelerometers contain a built-in charge amplifier powered by a constant-current
+excitation (typically 4&nbsp;mA). The NI&nbsp;9230 supplies this current and reads
+the resulting AC voltage. The <em>sensitivity</em> of the sensor (in mV/g) converts
+that voltage to acceleration in units of <em>g</em> (1&nbsp;g&nbsp;=&nbsp;9.81&nbsp;m/s&sup2;).</p>
+
+<h3>Blocks and Files</h3>
+<p>Data is acquired continuously, but it is written to disk in fixed-length
+<em>blocks</em>. Each block becomes one CSV file. The <strong>block duration</strong>
+setting controls how many seconds of data go into each file. For example, at a
+5&nbsp;kHz sample rate with a 10-second block duration, each file contains
+50,000 samples per channel.</p>
+
+<h3>Sample Rate</h3>
+<p>The sample rate determines how many readings per second the hardware takes on each
+channel. To capture vibrations up to a frequency <em>f</em>, you need a sample rate
+of at least 2<em>f</em> (the Nyquist criterion). A 5&nbsp;kHz rate lets you analyze
+frequencies up to 2.5&nbsp;kHz.</p>
+
+<div class="note">
+  <strong>Note:</strong> The hardware may adjust the requested sample rate slightly
+  to match its internal clock dividers. The actual rate used is reported in both the
+  GUI status bar and the CSV file header.
+</div>
+
+</main>
+</body>
+</html>
