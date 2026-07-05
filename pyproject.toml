@@ -26,8 +26,8 @@ dev = [
 ]
 
 [project.scripts]
-vibetest-daq = "vibetestdaq.daq:main"
-vibetest-daq-gui = "vibetestdaq.daq_gui:main"
+vibetest-daq = "vibetest_daq.daq:main"
+vibetest-daq-gui = "vibetest_daq.daq_gui:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

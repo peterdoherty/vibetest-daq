@@ -41,6 +41,14 @@ CHANNEL_LABELS = [
     "Mod2_Ch2",
 ]
 
+# Per-channel metadata written to file headers (CSV comment lines / HDF5
+# attributes) so analyzer reports are self-describing.  Keys follow the
+# vibetest-analyzer convention: "Channel <label> Units", "Channel <label>
+# Sensor Type", "Channel <label> Bandwidth (Hz)".
+CHANNEL_UNITS = "g"
+CHANNEL_SENSOR_TYPE = "accelerometer"
+CHANNEL_BANDWIDTH_HZ = None  # usable sensor bandwidth from the datasheet, e.g. 3000.0
+
 SAMPLE_RATE = 5000.0  # Hz  (≥ 2× max freq of interest; 2500 → 1250 Hz Nyquist)
 BLOCK_DURATION = 1.0  # seconds per acquired block (also the file interval)
 SENSITIVITY = 100.0  # mV/g  — set to match your accelerometer datasheet
@@ -86,6 +94,22 @@ def make_filename(ts: datetime.datetime) -> str:
     return os.path.join(OUTPUT_DIR, f"{FILE_PREFIX}_{stamp}.csv")
 
 
+# ── Helper: per-channel metadata header entries ──────────────────────────────
+
+
+def channel_metadata_items(labels: list[str]) -> list[tuple[str, str]]:
+    """(key, value) pairs describing each channel, in analyzer header format."""
+    items = []
+    for label in labels:
+        items.append((f"Channel {label} Units", CHANNEL_UNITS))
+        items.append((f"Channel {label} Sensor Type", CHANNEL_SENSOR_TYPE))
+        if CHANNEL_BANDWIDTH_HZ is not None:
+            items.append(
+                (f"Channel {label} Bandwidth (Hz)", f"{CHANNEL_BANDWIDTH_HZ:g}")
+            )
+    return items
+
+
 # ── Helper: write one block to ASCII CSV ──────────────────────────────────────
 
 
@@ -111,8 +135,13 @@ def write_block(data: np.ndarray, ts: datetime.datetime, fs: float):
         f"# Channels:          {n_ch}",
         f"# Sensitivity (mV/g):{SENSITIVITY}",
         "# Units:             g (acceleration)",
+    ]
+    labels = CHANNEL_LABELS[:n_ch]
+    for key, value in channel_metadata_items(labels):
+        header_lines.append(f"# {key}: {value}")
+    header_lines += [
         "# " + "-" * 60,
-        "time_epoch_s," + ",".join(CHANNEL_LABELS),
+        "time_epoch_s," + ",".join(labels),
     ]
     header = "\n".join(header_lines)
 
@@ -150,7 +179,10 @@ def write_block_hdf5(data: np.ndarray, ts: datetime.datetime, fs: float):
         f.attrs["n_channels"] = n_ch
         f.attrs["sensitivity_mv_per_g"] = SENSITIVITY
         f.attrs["units"] = "g"
-        f.attrs["channel_labels"] = CHANNEL_LABELS[:n_ch]
+        labels = CHANNEL_LABELS[:n_ch]
+        f.attrs["channel_labels"] = labels
+        for key, value in channel_metadata_items(labels):
+            f.attrs[key] = value
 
         f.create_dataset("time_epoch_s", data=t_axis)
         f.create_dataset("data", data=data.T)

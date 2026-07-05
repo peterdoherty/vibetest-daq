@@ -44,7 +44,7 @@ def daq_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "nidaqmx.stream_readers", stream_readers)
     monkeypatch.setitem(sys.modules, "nidaqmx.errors", errors)
 
-    sys.modules.pop("vibetestdaq.daq", None)
-    module = importlib.import_module("vibetestdaq.daq")
+    sys.modules.pop("vibetest_daq.daq", None)
+    module = importlib.import_module("vibetest_daq.daq")
     yield module
-    sys.modules.pop("vibetestdaq.daq", None)
+    sys.modules.pop("vibetest_daq.daq", None)

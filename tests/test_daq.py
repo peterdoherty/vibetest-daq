@@ -32,10 +32,28 @@ def test_write_block_creates_csv_with_metadata_and_samples(daq_module, tmp_path)
     assert path == str(tmp_path / "sample_20260520_183000_000.csv")
     assert "# Block start (UTC): 2026-05-20T18:30:00" in contents
     assert "# Sample rate (Hz):  10.0" in contents
+    assert "# Channel x Units: g" in contents
+    assert "# Channel x Sensor Type: accelerometer" in contents
+    assert "# Channel y Units: g" in contents
+    assert "# Channel y Sensor Type: accelerometer" in contents
+    assert "Bandwidth" not in contents
     assert "time_epoch_s,x,y" in contents
     assert "1779316200.000000,1,-1.5" in contents
     assert "1779316200.100000,2,-2.5" in contents
     assert "1779316200.200000,3,-3.5" in contents
+
+
+def test_write_block_includes_bandwidth_when_configured(daq_module, tmp_path):
+    daq_module.OUTPUT_DIR = str(tmp_path)
+    daq_module.FILE_PREFIX = "bw"
+    daq_module.CHANNEL_LABELS = ["x"]
+    daq_module.CHANNEL_BANDWIDTH_HZ = 3000.0
+    data = np.array([[1.0, 2.0]])
+
+    daq_module.write_block(data, dt.datetime(2026, 5, 20, 18, 30, 0), fs=10.0)
+
+    contents = (tmp_path / "bw_20260520_183000_000.csv").read_text(encoding="utf-8")
+    assert "# Channel x Bandwidth (Hz): 3000" in contents
 
 
 def test_main_applies_cli_arguments_before_running_acquisition(

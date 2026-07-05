@@ -98,3 +98,4 @@ data/
 # image16
 # acquisition_*.log
 # run.log
+.DS_Store

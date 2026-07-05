@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
-    QSpinBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -37,6 +36,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QStatusBar,
     QTabWidget,
     QTextEdit,
@@ -62,6 +62,21 @@ CHANNEL_LABELS = [
     "Mod2_Ch0", "Mod2_Ch1", "Mod2_Ch2",
 ]
 DEFAULT_CHANNEL_AXES = ["X", "Y", "Z", "X", "Y", "Z"]
+DEFAULT_CHANNEL_UNITS = "g"
+DEFAULT_CHANNEL_SENSOR_TYPE = "accelerometer"
+CHANNEL_SENSOR_TYPES = ["accelerometer", "position"]
+
+# Per-channel header keys shared with vibetest-analyzer: written as
+# "# Channel <label> <Key>: <value>" CSV comment lines, or as HDF5 file
+# attributes with the identical "Channel <label> <Key>" key strings.
+CHANNEL_METADATA_KEYS = {
+    "units": "Units",
+    "sensor_type": "Sensor Type",
+    "bandwidth_hz": "Bandwidth (Hz)",
+    "axis": "Axis",
+    "location": "Location",
+    "sensor_serial": "Sensor Serial",
+}
 
 
 # ── CSV writer (self-contained; keeps daq_gui independent of daq.py) ─────────
@@ -116,18 +131,17 @@ def _write_block(
         if not value:
             continue
         if key == "notes":
-            value = " | ".join(line.strip() for line in value.splitlines() if line.strip())
+            value = " | ".join(
+                line.strip() for line in value.splitlines() if line.strip()
+            )
             if value:
                 header_lines.append(f"# {label}: {value}")
         else:
             header_lines.append(f"# {label}: {value}")
-    channel_header_labels = {
-        "axis": "Axis",
-        "location": "Location",
-        "sensor_serial": "Sensor Serial",
-    }
-    for channel_label, channel_meta in zip(channel_labels, channel_metadata, strict=False):
-        for key, label in channel_header_labels.items():
+    for channel_label, channel_meta in zip(
+        channel_labels, channel_metadata, strict=False
+    ):
+        for key, label in CHANNEL_METADATA_KEYS.items():
             value = str(channel_meta.get(key, "")).strip()
             if value:
                 header_lines.append(f"# Channel {channel_label} {label}: {value}")
@@ -186,20 +200,31 @@ def _write_block_hdf5(
         f.attrs["units"] = "g"
         f.attrs["channel_labels"] = channel_labels
 
-        for key in ("test_id", "dut_make", "dut_model", "dut_serial",
-                     "test_stand", "operator", "location", "notes"):
+        # Attribute names match the analyzer's CSV header keys so both
+        # formats produce identical metadata dictionaries on load.
+        system_attr_labels = {
+            "test_id": "Test ID",
+            "dut_make": "DUT Make",
+            "dut_model": "DUT Model",
+            "dut_serial": "DUT Serial Number",
+            "test_stand": "Test Stand",
+            "operator": "Operator",
+            "location": "Location",
+            "notes": "Test Notes",
+        }
+        for key, label in system_attr_labels.items():
             value = str(system_metadata.get(key, "")).strip()
             if value:
-                f.attrs[key] = value
-
-        f.create_dataset("time_epoch_s", data=t_axis)
-        ds = f.create_dataset("data", data=data.T)
+                f.attrs[label] = value
 
         for ch_label, ch_meta in zip(channel_labels, channel_metadata, strict=False):
-            for key in ("axis", "location", "sensor_serial"):
+            for key, label in CHANNEL_METADATA_KEYS.items():
                 value = str(ch_meta.get(key, "")).strip()
                 if value:
-                    ds.attrs[f"{ch_label}_{key}"] = value
+                    f.attrs[f"Channel {ch_label} {label}"] = value
+
+        f.create_dataset("time_epoch_s", data=t_axis)
+        f.create_dataset("data", data=data.T)
 
     return path
 
@@ -334,7 +359,10 @@ class DaqWorker(QObject):
             task.start()
             t0 = time.monotonic()
             n  = 0
-            max_blocks = None if cfg.get("continuous", True) else max(1, int(cfg.get("file_count", 1)))
+            max_blocks = (
+                None if cfg.get("continuous", True)
+                else max(1, int(cfg.get("file_count", 1)))
+            )
 
             while not self._stop:
                 if max_blocks is not None and n >= max_blocks:
@@ -346,7 +374,9 @@ class DaqWorker(QObject):
                         if err is not None:
                             self.error.emit(err)
                         else:
-                            self.block_done.emit(blk_n, path, time.monotonic() - t0, peaks)
+                            self.block_done.emit(
+                                blk_n, path, time.monotonic() - t0, peaks
+                            )
                     except queue.Empty:
                         break
 
@@ -625,31 +655,53 @@ class DaqController(QMainWindow):
         # ── Channel metadata ─────────────────────────────────────────────────
         grp_channels = QGroupBox("Channel Metadata")
         ch_layout = QGridLayout(grp_channels)
-        ch_layout.setColumnStretch(3, 1)
-        ch_layout.setColumnStretch(4, 1)
-        ch_layout.addWidget(QLabel("Enable"),        0, 0)
-        ch_layout.addWidget(QLabel("Channel"),       0, 1)
-        ch_layout.addWidget(QLabel("Axis"),          0, 2)
-        ch_layout.addWidget(QLabel("Location"),      0, 3)
-        ch_layout.addWidget(QLabel("Sensor serial"), 0, 4)
+        ch_layout.setColumnStretch(6, 1)
+        ch_layout.setColumnStretch(7, 1)
+        ch_layout.addWidget(QLabel("Enable"),         0, 0)
+        ch_layout.addWidget(QLabel("Channel"),        0, 1)
+        ch_layout.addWidget(QLabel("Sensor type"),    0, 2)
+        ch_layout.addWidget(QLabel("Units"),          0, 3)
+        ch_layout.addWidget(QLabel("Bandwidth"),      0, 4)
+        ch_layout.addWidget(QLabel("Axis"),           0, 5)
+        ch_layout.addWidget(QLabel("Location"),       0, 6)
+        ch_layout.addWidget(QLabel("Sensor serial"),  0, 7)
         self._channel_metadata_edits = []
         for row, label in enumerate(CHANNEL_LABELS, start=1):
             enabled = QCheckBox()
             enabled.setChecked(True)
             enabled.setToolTip(f"Include {label} in acquisition")
+            sensor_type = QComboBox()
+            sensor_type.addItems(CHANNEL_SENSOR_TYPES)
+            sensor_type.setEditable(True)
+            sensor_type.setCurrentText(DEFAULT_CHANNEL_SENSOR_TYPE)
+            units = QLineEdit(DEFAULT_CHANNEL_UNITS)
+            units.setFixedWidth(48)
+            units.setToolTip("Engineering units of this channel (g, um, mm, …)")
+            bandwidth = QLineEdit()
+            bandwidth.setFixedWidth(72)
+            bandwidth.setPlaceholderText("Hz")
+            bandwidth.setToolTip(
+                "Usable sensor bandwidth in Hz from the datasheet (blank = unspecified)"
+            )
             axis = QLineEdit(DEFAULT_CHANNEL_AXES[row - 1])
-            axis.setFixedWidth(64)
+            axis.setFixedWidth(48)
             location = QLineEdit()
             sensor_serial = QLineEdit()
             ch_layout.addWidget(enabled,       row, 0, Qt.AlignmentFlag.AlignHCenter)
             ch_layout.addWidget(QLabel(label), row, 1)
-            ch_layout.addWidget(axis,          row, 2)
-            ch_layout.addWidget(location,      row, 3)
-            ch_layout.addWidget(sensor_serial, row, 4)
+            ch_layout.addWidget(sensor_type,   row, 2)
+            ch_layout.addWidget(units,         row, 3)
+            ch_layout.addWidget(bandwidth,     row, 4)
+            ch_layout.addWidget(axis,          row, 5)
+            ch_layout.addWidget(location,      row, 6)
+            ch_layout.addWidget(sensor_serial, row, 7)
             self._channel_metadata_edits.append(
                 {
                     "label":         label,
                     "enabled":       enabled,
+                    "sensor_type":   sensor_type,
+                    "units":         units,
+                    "bandwidth_hz":  bandwidth,
                     "axis":          axis,
                     "location":      location,
                     "sensor_serial": sensor_serial,
@@ -761,7 +813,11 @@ class DaqController(QMainWindow):
             self.txt_test_notes,
         ]
         for edits in self._channel_metadata_edits:
-            widgets.extend([edits["enabled"], edits["axis"], edits["location"], edits["sensor_serial"]])
+            widgets.extend([
+                edits["enabled"], edits["sensor_type"], edits["units"],
+                edits["bandwidth_hz"], edits["axis"], edits["location"],
+                edits["sensor_serial"],
+            ])
         return tuple(widgets)
 
     def _set_settings_enabled(self, enabled: bool):
@@ -843,13 +899,29 @@ class DaqController(QMainWindow):
     def _restore_settings(self):
         settings = self._settings()
         self.tabs.setCurrentIndex(int(settings.value("window/current_tab", 0)))
-        self.txt_outdir.setText(settings.value("acquisition/output_dir", DEFAULT_OUTPUT_DIR))
-        self.txt_prefix.setText(settings.value("acquisition/file_prefix", DEFAULT_FILE_PREFIX))
-        self.spn_rate.setValue(float(settings.value("acquisition/sample_rate", DEFAULT_SAMPLE_RATE)))
-        self.spn_block.setValue(float(settings.value("acquisition/block_duration", DEFAULT_BLOCK_DURATION)))
-        self.spn_sens.setValue(float(settings.value("acquisition/sensitivity", DEFAULT_SENSITIVITY)))
-        self.spn_iepe.setValue(float(settings.value("acquisition/iepe_excitation", DEFAULT_IEPE_EXCITATION)))
-        self.spn_file_count.setValue(int(settings.value("acquisition/file_count", DEFAULT_FILE_COUNT)))
+        self.txt_outdir.setText(
+            settings.value("acquisition/output_dir", DEFAULT_OUTPUT_DIR)
+        )
+        self.txt_prefix.setText(
+            settings.value("acquisition/file_prefix", DEFAULT_FILE_PREFIX)
+        )
+        self.spn_rate.setValue(
+            float(settings.value("acquisition/sample_rate", DEFAULT_SAMPLE_RATE))
+        )
+        self.spn_block.setValue(
+            float(settings.value("acquisition/block_duration", DEFAULT_BLOCK_DURATION))
+        )
+        self.spn_sens.setValue(
+            float(settings.value("acquisition/sensitivity", DEFAULT_SENSITIVITY))
+        )
+        self.spn_iepe.setValue(
+            float(
+                settings.value("acquisition/iepe_excitation", DEFAULT_IEPE_EXCITATION)
+            )
+        )
+        self.spn_file_count.setValue(
+            int(settings.value("acquisition/file_count", DEFAULT_FILE_COUNT))
+        )
         self.chk_continuous.setChecked(
             settings.value("acquisition/continuous", True, type=bool)
         )
@@ -861,7 +933,9 @@ class DaqController(QMainWindow):
         )
         if fmt_idx >= 0:
             self.cmb_format.setCurrentIndex(fmt_idx)
-        self.spn_meter_range.setValue(float(settings.value("acquisition/meter_range_g", 1.0)))
+        self.spn_meter_range.setValue(
+            float(settings.value("acquisition/meter_range_g", 1.0))
+        )
         self.txt_test_id.setText(settings.value("system/test_id", ""))
         self.txt_dut_make.setText(settings.value("system/dut_make", ""))
         self.txt_dut_model.setText(settings.value("system/dut_model", ""))
@@ -874,6 +948,15 @@ class DaqController(QMainWindow):
             prefix = f"channels/{idx}"
             edits["enabled"].setChecked(
                 settings.value(f"{prefix}/enabled", True, type=bool)
+            )
+            edits["sensor_type"].setCurrentText(
+                settings.value(f"{prefix}/sensor_type", DEFAULT_CHANNEL_SENSOR_TYPE)
+            )
+            edits["units"].setText(
+                settings.value(f"{prefix}/units", DEFAULT_CHANNEL_UNITS)
+            )
+            edits["bandwidth_hz"].setText(
+                settings.value(f"{prefix}/bandwidth_hz", "")
             )
             edits["axis"].setText(
                 settings.value(f"{prefix}/axis", DEFAULT_CHANNEL_AXES[idx])
@@ -911,6 +994,11 @@ class DaqController(QMainWindow):
             prefix = f"channels/{idx}"
             settings.setValue(f"{prefix}/label", edits["label"])
             settings.setValue(f"{prefix}/enabled", edits["enabled"].isChecked())
+            settings.setValue(
+                f"{prefix}/sensor_type", edits["sensor_type"].currentText()
+            )
+            settings.setValue(f"{prefix}/units", edits["units"].text())
+            settings.setValue(f"{prefix}/bandwidth_hz", edits["bandwidth_hz"].text())
             settings.setValue(f"{prefix}/axis", edits["axis"].text())
             settings.setValue(f"{prefix}/location", edits["location"].text())
             settings.setValue(
@@ -934,6 +1022,9 @@ class DaqController(QMainWindow):
         return [
             {
                 "label": edits["label"],
+                "sensor_type": edits["sensor_type"].currentText().strip().lower(),
+                "units": edits["units"].text().strip(),
+                "bandwidth_hz": edits["bandwidth_hz"].text().strip(),
                 "axis": edits["axis"].text().strip(),
                 "location": edits["location"].text().strip(),
                 "sensor_serial": edits["sensor_serial"].text().strip(),
@@ -1003,7 +1094,9 @@ class DaqController(QMainWindow):
 
         enabled_labels = {spec[1] for spec in channel_specs}
         self._active_meters = []
-        for meter, edits in zip(self._meters, self._channel_metadata_edits):
+        for meter, edits in zip(
+            self._meters, self._channel_metadata_edits, strict=True
+        ):
             active = edits["label"] in enabled_labels
             meter.set_active(active)
             meter.reset()
