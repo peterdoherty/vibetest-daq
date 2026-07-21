@@ -4,8 +4,9 @@
 """
 daq_gui.py
 ----------
-Standalone PySide6 GUI for controlling the NI cDAQ-9174 / NI 9230
-vibration data acquisition system.
+Standalone PySide6 GUI for controlling the NI cDAQ-9177 chassis, running
+two NI 9234 IEPE accelerometer modules and one NI 9215 analog voltage
+input module (used for Keyence laser displacement sensor analog outputs).
 
 Runs acquisition in a background thread so the UI stays responsive.
 Settings are locked while recording and restored on stop.
@@ -50,20 +51,52 @@ DEFAULT_SAMPLE_RATE     = 5000.0
 DEFAULT_BLOCK_DURATION  = 10.0
 DEFAULT_SENSITIVITY     = 100.0
 DEFAULT_IEPE_EXCITATION = 0.004
-DEFAULT_MAX_VOLTAGE     = 5.0
+DEFAULT_MAX_VOLTAGE     = 5.0   # V — NI 9234 IEPE input range
+POSITION_MAX_VOLTAGE    = 10.0  # V — NI 9215 input range
 DEFAULT_OUTPUT_DIR      = "vibration_data"
 DEFAULT_FILE_PREFIX     = "vib"
 DEFAULT_FILE_COUNT      = 10
 DEFAULT_MODULE_1        = "cDAQ1Mod1"
 DEFAULT_MODULE_2        = "cDAQ1Mod2"
+DEFAULT_MODULE_3        = "cDAQ1Mod3"
 
-CHANNEL_LABELS = [
-    "Mod1_Ch0", "Mod1_Ch1", "Mod1_Ch2",
-    "Mod2_Ch0", "Mod2_Ch1", "Mod2_Ch2",
+# Fixed hardware wiring: which physical module/input each channel comes
+# from, and what kind of nidaqmx channel it requires. This is intentionally
+# separate from the user-editable "sensor type" metadata field below (which
+# is free text for CSV/HDF5 labeling only) so that relabeling a channel in
+# the Channels tab can never change how it's actually configured on the DAQ.
+#   "accel"   -> IEPE accelerometer input (NI 9234), uses the task-wide
+#                Sensitivity / IEPE excitation settings.
+#   "voltage" -> plain analog voltage input (NI 9215), scaled to engineering
+#                units via the per-channel Scale/Offset fields below.
+def _accel_chdef(label, module, ai, axis):
+    return {
+        "label": label, "kind": "accel", "module": module, "ai": ai,
+        "axis": axis, "sensor_type": "accelerometer", "units": "g",
+    }
+
+
+def _position_chdef(label, module, ai):
+    return {
+        "label": label, "kind": "voltage", "module": module, "ai": ai,
+        "axis": "", "sensor_type": "position", "units": "mm",
+    }
+
+
+CHANNEL_DEFS = [
+    _accel_chdef("Mod1_Ch0", "mod1", 0, "X"),
+    _accel_chdef("Mod1_Ch1", "mod1", 1, "Y"),
+    _accel_chdef("Mod1_Ch2", "mod1", 2, "Z"),
+    _accel_chdef("Mod1_Ch3", "mod1", 3, ""),
+    _accel_chdef("Mod2_Ch0", "mod2", 0, "X"),
+    _accel_chdef("Mod2_Ch1", "mod2", 1, "Y"),
+    _accel_chdef("Mod2_Ch2", "mod2", 2, "Z"),
+    _accel_chdef("Mod2_Ch3", "mod2", 3, ""),
+    _position_chdef("Pos_Ch0", "mod3", 0),
+    _position_chdef("Pos_Ch1", "mod3", 1),
 ]
-DEFAULT_CHANNEL_AXES = ["X", "Y", "Z", "X", "Y", "Z"]
-DEFAULT_CHANNEL_UNITS = "g"
-DEFAULT_CHANNEL_SENSOR_TYPE = "accelerometer"
+CHANNEL_LABELS = [d["label"] for d in CHANNEL_DEFS]
+DEFAULT_CHANNEL_AXES = [d["axis"] for d in CHANNEL_DEFS]
 CHANNEL_SENSOR_TYPES = ["accelerometer", "position"]
 
 # Per-channel header keys shared with vibetest-analyzer: written as
@@ -107,7 +140,7 @@ def _write_block(
     t_axis    = t0_epoch + t_offsets
 
     header_lines = [
-        "# NI cDAQ-9174 / NI 9230 Vibration Data",
+        "# NI cDAQ-9177 / NI 9234 + NI 9215 Vibration & Position Data",
         f"# Block start (UTC): {ts.isoformat()}",
         f"# Block start (epoch s): {t0_epoch:.6f}",
         f"# Sample rate (Hz):  {fs}",
@@ -263,7 +296,9 @@ class DaqWorker(QObject):
                 AcquisitionType,
                 ExcitationSource,
                 TerminalConfiguration,
+                VoltageUnits,
             )
+            from nidaqmx.scale import Scale
             from nidaqmx.stream_readers import AnalogMultiChannelReader
         except ImportError as exc:
             self.error.emit(f"nidaqmx not available: {exc}")
@@ -276,18 +311,35 @@ class DaqWorker(QObject):
         iepe_exc     = cfg["iepe_excitation"]
         output_dir   = cfg["output_dir"]
         file_prefix  = cfg["file_prefix"]
-        channel_specs = cfg["channel_specs"]   # list of (physical_channel, label)
-        ch_labels    = [s[1] for s in channel_specs]
+        channel_specs = cfg["channel_specs"]  # see _enabled_channel_specs
+        ch_labels    = [s["label"] for s in channel_specs]
         system_meta  = cfg["system_metadata"]
         channel_meta = cfg["channel_metadata"]
         n_ch         = len(ch_labels)
         max_v        = DEFAULT_MAX_VOLTAGE
 
         with nidaqmx.Task() as task:
-            for phys, label in channel_specs:
-                task.ai_channels.add_ai_accel_chan(
-                        physical_channel=phys,
-                        name_to_assign_to_channel=label,
+            for spec in channel_specs:
+                if spec["kind"] == "voltage":
+                    scale = Scale.create_lin_scale(
+                        f"vibetest_scale_{spec['label']}",
+                        slope=spec["scale"],
+                        y_intercept=spec["offset"],
+                        scaled_units=spec.get("units") or "V",
+                    )
+                    task.ai_channels.add_ai_voltage_chan(
+                        physical_channel=spec["phys"],
+                        name_to_assign_to_channel=spec["label"],
+                        terminal_config=TerminalConfiguration.DEFAULT,
+                        min_val=-POSITION_MAX_VOLTAGE,
+                        max_val=POSITION_MAX_VOLTAGE,
+                        units=VoltageUnits.FROM_CUSTOM_SCALE,
+                        custom_scale_name=scale.name,
+                    )
+                else:
+                    task.ai_channels.add_ai_accel_chan(
+                        physical_channel=spec["phys"],
+                        name_to_assign_to_channel=spec["label"],
                         terminal_config=TerminalConfiguration.DEFAULT,
                         min_val=-(max_v / (sensitivity / 1000)),
                         max_val=  max_v / (sensitivity / 1000),
@@ -415,9 +467,10 @@ class DaqWorker(QObject):
 # ── Level meter widget ────────────────────────────────────────────────────────
 
 class LevelMeter(QWidget):
-    def __init__(self, label: str, full_scale_g: float, parent=None):
+    def __init__(self, label: str, full_scale: float, unit: str = "g", parent=None):
         super().__init__(parent)
-        self.full_scale_g = full_scale_g
+        self.full_scale = full_scale
+        self.unit = unit
 
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 1, 0, 1)
@@ -445,10 +498,10 @@ class LevelMeter(QWidget):
 
         self._apply_color("green")
 
-    def update_peak(self, peak_g: float):
-        frac = min(peak_g / self.full_scale_g, 1.0)
+    def update_peak(self, peak: float):
+        frac = min(abs(peak) / self.full_scale, 1.0) if self.full_scale else 0.0
         self._bar.setValue(int(frac * 1000))
-        self._val.setText(f"{peak_g:.3f} g")
+        self._val.setText(f"{peak:.3f} {self.unit}".rstrip())
         if frac < 0.5:
             self._apply_color("green")
         elif frac < 0.8:
@@ -583,20 +636,28 @@ class DaqController(QMainWindow):
         self.spn_iepe.setSingleStep(0.002)
         self.spn_iepe.setToolTip(
             "Valid values depend on the NI module.\n"
-            "NI 9230/9232 typically accept 0.0 A or 0.004 A (4 mA)."
+            "NI 9234 typically accepts 0.0 A or 0.004 A (4 mA)."
         )
         gc.addWidget(self.spn_iepe, 4, 3)
 
-        gc.addWidget(QLabel("File count:"), 5, 0)
+        gc.addWidget(QLabel("Module 3 device:"), 5, 0)
+        self.txt_mod3 = QLineEdit(DEFAULT_MODULE_3)
+        self.txt_mod3.setToolTip(
+            "NI 9215 device name (used for the Keyence position sensor "
+            "analog inputs, Pos_Ch0/Pos_Ch1)."
+        )
+        gc.addWidget(self.txt_mod3, 5, 1)
+
+        gc.addWidget(QLabel("File count:"), 6, 0)
         self.spn_file_count = QSpinBox()
         self.spn_file_count.setRange(1, 10000)
         self.spn_file_count.setValue(DEFAULT_FILE_COUNT)
-        gc.addWidget(self.spn_file_count, 5, 1)
+        gc.addWidget(self.spn_file_count, 6, 1)
 
         self.chk_continuous = QCheckBox("Continuous")
         self.chk_continuous.setChecked(True)
         self.chk_continuous.toggled.connect(self._on_continuous_toggled)
-        gc.addWidget(self.chk_continuous, 5, 2, 1, 2)
+        gc.addWidget(self.chk_continuous, 6, 2, 1, 2)
 
         acquire_layout.addWidget(grp_cfg)
 
@@ -656,25 +717,28 @@ class DaqController(QMainWindow):
         grp_channels = QGroupBox("Channel Metadata")
         ch_layout = QGridLayout(grp_channels)
         ch_layout.setColumnStretch(6, 1)
-        ch_layout.setColumnStretch(7, 1)
-        ch_layout.addWidget(QLabel("Enable"),         0, 0)
-        ch_layout.addWidget(QLabel("Channel"),        0, 1)
-        ch_layout.addWidget(QLabel("Sensor type"),    0, 2)
-        ch_layout.addWidget(QLabel("Units"),          0, 3)
-        ch_layout.addWidget(QLabel("Bandwidth"),      0, 4)
-        ch_layout.addWidget(QLabel("Axis"),           0, 5)
-        ch_layout.addWidget(QLabel("Location"),       0, 6)
-        ch_layout.addWidget(QLabel("Sensor serial"),  0, 7)
+        ch_layout.addWidget(QLabel("Enable"),           0, 0)
+        ch_layout.addWidget(QLabel("Channel"),          0, 1)
+        ch_layout.addWidget(QLabel("Sensor type"),      0, 2)
+        ch_layout.addWidget(QLabel("Units"),            0, 3)
+        ch_layout.addWidget(QLabel("Bandwidth"),        0, 4)
+        ch_layout.addWidget(QLabel("Axis"),             0, 5)
+        ch_layout.addWidget(QLabel("Location"),         0, 6)
+        ch_layout.addWidget(QLabel("Sensor serial"),    0, 7)
+        ch_layout.addWidget(QLabel("Scale (unit/V)"),   0, 8)
+        ch_layout.addWidget(QLabel("Offset (unit)"),    0, 9)
         self._channel_metadata_edits = []
-        for row, label in enumerate(CHANNEL_LABELS, start=1):
+        for row, chdef in enumerate(CHANNEL_DEFS, start=1):
+            label = chdef["label"]
+            is_voltage = chdef["kind"] == "voltage"
             enabled = QCheckBox()
             enabled.setChecked(True)
             enabled.setToolTip(f"Include {label} in acquisition")
             sensor_type = QComboBox()
             sensor_type.addItems(CHANNEL_SENSOR_TYPES)
             sensor_type.setEditable(True)
-            sensor_type.setCurrentText(DEFAULT_CHANNEL_SENSOR_TYPE)
-            units = QLineEdit(DEFAULT_CHANNEL_UNITS)
+            sensor_type.setCurrentText(chdef["sensor_type"])
+            units = QLineEdit(chdef["units"])
             units.setFixedWidth(48)
             units.setToolTip("Engineering units of this channel (g, um, mm, …)")
             bandwidth = QLineEdit()
@@ -683,10 +747,34 @@ class DaqController(QMainWindow):
             bandwidth.setToolTip(
                 "Usable sensor bandwidth in Hz from the datasheet (blank = unspecified)"
             )
-            axis = QLineEdit(DEFAULT_CHANNEL_AXES[row - 1])
+            axis = QLineEdit(chdef["axis"])
             axis.setFixedWidth(48)
             location = QLineEdit()
             sensor_serial = QLineEdit()
+            scale = QDoubleSpinBox()
+            scale.setRange(-1.0e6, 1.0e6)
+            scale.setDecimals(6)
+            scale.setValue(1.0)
+            scale.setFixedWidth(90)
+            scale.setEnabled(is_voltage)
+            scale.setToolTip(
+                "NI 9215 voltage-input channels only: slope of the linear "
+                "scale (engineering units per volt) applied to the raw "
+                "reading, i.e. value = scale * volts + offset.\n"
+                "For a Keyence LK-G5001, compute this from the analog "
+                "output range and measurement range configured on the "
+                "controller — it is not a fixed constant."
+            )
+            offset = QDoubleSpinBox()
+            offset.setRange(-1.0e6, 1.0e6)
+            offset.setDecimals(6)
+            offset.setValue(0.0)
+            offset.setFixedWidth(90)
+            offset.setEnabled(is_voltage)
+            offset.setToolTip(
+                "NI 9215 voltage-input channels only: y-intercept of the "
+                "linear scale (engineering units at 0 V)."
+            )
             ch_layout.addWidget(enabled,       row, 0, Qt.AlignmentFlag.AlignHCenter)
             ch_layout.addWidget(QLabel(label), row, 1)
             ch_layout.addWidget(sensor_type,   row, 2)
@@ -695,9 +783,14 @@ class DaqController(QMainWindow):
             ch_layout.addWidget(axis,          row, 5)
             ch_layout.addWidget(location,      row, 6)
             ch_layout.addWidget(sensor_serial, row, 7)
+            ch_layout.addWidget(scale,         row, 8)
+            ch_layout.addWidget(offset,        row, 9)
             self._channel_metadata_edits.append(
                 {
                     "label":         label,
+                    "kind":          chdef["kind"],
+                    "module":        chdef["module"],
+                    "ai":            chdef["ai"],
                     "enabled":       enabled,
                     "sensor_type":   sensor_type,
                     "units":         units,
@@ -705,6 +798,8 @@ class DaqController(QMainWindow):
                     "axis":          axis,
                     "location":      location,
                     "sensor_serial": sensor_serial,
+                    "scale":         scale,
+                    "offset":        offset,
                 }
             )
         channels_layout.addWidget(grp_channels)
@@ -760,7 +855,7 @@ class DaqController(QMainWindow):
         glv.setSpacing(3)
 
         range_row = QHBoxLayout()
-        range_row.addWidget(QLabel("Full scale:"))
+        range_row.addWidget(QLabel("Accel full scale:"))
         self.spn_meter_range = QDoubleSpinBox()
         self.spn_meter_range.setRange(0.001, 50.0)
         self.spn_meter_range.setValue(1.0)
@@ -770,12 +865,31 @@ class DaqController(QMainWindow):
         self.spn_meter_range.setFixedWidth(110)
         self.spn_meter_range.valueChanged.connect(self._on_meter_range_changed)
         range_row.addWidget(self.spn_meter_range)
+
+        range_row.addWidget(QLabel("Position full scale:"))
+        self.spn_pos_meter_range = QDoubleSpinBox()
+        self.spn_pos_meter_range.setRange(0.001, 1.0e6)
+        self.spn_pos_meter_range.setValue(10.0)
+        self.spn_pos_meter_range.setDecimals(3)
+        self.spn_pos_meter_range.setSingleStep(1.0)
+        self.spn_pos_meter_range.setFixedWidth(110)
+        self.spn_pos_meter_range.setToolTip(
+            "Full-scale value in the position channels' configured engineering "
+            "units (see the Units column on the Channels tab)."
+        )
+        self.spn_pos_meter_range.valueChanged.connect(self._on_meter_range_changed)
+        range_row.addWidget(self.spn_pos_meter_range)
         range_row.addStretch()
         glv.addLayout(range_row)
 
         self._meters: list[LevelMeter] = []
-        for label in CHANNEL_LABELS:
-            m = LevelMeter(label, self.spn_meter_range.value())
+        for chdef in CHANNEL_DEFS:
+            if chdef["kind"] == "voltage":
+                full_scale, unit = self.spn_pos_meter_range.value(), chdef["units"]
+            else:
+                full_scale, unit = self.spn_meter_range.value(), "g"
+            m = LevelMeter(chdef["label"], full_scale, unit)
+            m.kind = chdef["kind"]
             glv.addWidget(m)
             self._meters.append(m)
 
@@ -806,7 +920,7 @@ class DaqController(QMainWindow):
             self.cmb_format,
             self.spn_rate, self.spn_block, self.spn_sens,
             self.spn_iepe, self.spn_file_count, self.chk_continuous,
-            self.txt_mod1, self.txt_mod2,
+            self.txt_mod1, self.txt_mod2, self.txt_mod3,
             self.txt_test_id,
             self.txt_dut_make, self.txt_dut_model, self.txt_dut_serial,
             self.txt_test_stand, self.txt_operator, self.txt_location,
@@ -823,10 +937,20 @@ class DaqController(QMainWindow):
     def _set_settings_enabled(self, enabled: bool):
         for w in self._settings_widgets():
             w.setEnabled(enabled)
+        # Scale/offset only ever apply to voltage (position) channels —
+        # never re-enable them for accelerometer rows.
+        for edits in self._channel_metadata_edits:
+            is_voltage = edits["kind"] == "voltage"
+            edits["scale"].setEnabled(enabled and is_voltage)
+            edits["offset"].setEnabled(enabled and is_voltage)
 
-    def _on_meter_range_changed(self, value: float):
+    def _on_meter_range_changed(self, _value: float = 0.0):
         for m in self._meters:
-            m.full_scale_g = value
+            m.full_scale = (
+                self.spn_pos_meter_range.value()
+                if m.kind == "voltage"
+                else self.spn_meter_range.value()
+            )
 
     def _on_continuous_toggled(self, enabled: bool):
         self.spn_file_count.setEnabled(not enabled)
@@ -928,6 +1052,7 @@ class DaqController(QMainWindow):
         self._on_continuous_toggled(self.chk_continuous.isChecked())
         self.txt_mod1.setText(settings.value("acquisition/module_1", DEFAULT_MODULE_1))
         self.txt_mod2.setText(settings.value("acquisition/module_2", DEFAULT_MODULE_2))
+        self.txt_mod3.setText(settings.value("acquisition/module_3", DEFAULT_MODULE_3))
         fmt_idx = self.cmb_format.findText(
             settings.value("acquisition/output_format", "CSV")
         )
@@ -935,6 +1060,9 @@ class DaqController(QMainWindow):
             self.cmb_format.setCurrentIndex(fmt_idx)
         self.spn_meter_range.setValue(
             float(settings.value("acquisition/meter_range_g", 1.0))
+        )
+        self.spn_pos_meter_range.setValue(
+            float(settings.value("acquisition/meter_range_position", 10.0))
         )
         self.txt_test_id.setText(settings.value("system/test_id", ""))
         self.txt_dut_make.setText(settings.value("system/dut_make", ""))
@@ -949,11 +1077,12 @@ class DaqController(QMainWindow):
             edits["enabled"].setChecked(
                 settings.value(f"{prefix}/enabled", True, type=bool)
             )
+            default_sensor_type = CHANNEL_DEFS[idx]["sensor_type"]
             edits["sensor_type"].setCurrentText(
-                settings.value(f"{prefix}/sensor_type", DEFAULT_CHANNEL_SENSOR_TYPE)
+                settings.value(f"{prefix}/sensor_type", default_sensor_type)
             )
             edits["units"].setText(
-                settings.value(f"{prefix}/units", DEFAULT_CHANNEL_UNITS)
+                settings.value(f"{prefix}/units", CHANNEL_DEFS[idx]["units"])
             )
             edits["bandwidth_hz"].setText(
                 settings.value(f"{prefix}/bandwidth_hz", "")
@@ -965,6 +1094,8 @@ class DaqController(QMainWindow):
             edits["sensor_serial"].setText(
                 settings.value(f"{prefix}/sensor_serial", "")
             )
+            edits["scale"].setValue(float(settings.value(f"{prefix}/scale", 1.0)))
+            edits["offset"].setValue(float(settings.value(f"{prefix}/offset", 0.0)))
         self._update_metadata_summary()
 
     def _save_settings(self):
@@ -980,8 +1111,12 @@ class DaqController(QMainWindow):
         settings.setValue("acquisition/continuous", self.chk_continuous.isChecked())
         settings.setValue("acquisition/module_1", self.txt_mod1.text())
         settings.setValue("acquisition/module_2", self.txt_mod2.text())
+        settings.setValue("acquisition/module_3", self.txt_mod3.text())
         settings.setValue("acquisition/output_format", self.cmb_format.currentText())
         settings.setValue("acquisition/meter_range_g", self.spn_meter_range.value())
+        settings.setValue(
+            "acquisition/meter_range_position", self.spn_pos_meter_range.value()
+        )
         settings.setValue("system/test_id", self.txt_test_id.text())
         settings.setValue("system/dut_make", self.txt_dut_make.text())
         settings.setValue("system/dut_model", self.txt_dut_model.text())
@@ -1004,6 +1139,8 @@ class DaqController(QMainWindow):
             settings.setValue(
                 f"{prefix}/sensor_serial", edits["sensor_serial"].text()
             )
+            settings.setValue(f"{prefix}/scale", edits["scale"].value())
+            settings.setValue(f"{prefix}/offset", edits["offset"].value())
         settings.sync()
 
     def _system_metadata(self):
@@ -1034,15 +1171,21 @@ class DaqController(QMainWindow):
         ]
 
     def _enabled_channel_specs(self):
-        mod1 = self.txt_mod1.text()
-        mod2 = self.txt_mod2.text()
-        phys_map = [
-            f"{mod1}/ai0", f"{mod1}/ai1", f"{mod1}/ai2",
-            f"{mod2}/ai0", f"{mod2}/ai1", f"{mod2}/ai2",
-        ]
+        devices = {
+            "mod1": self.txt_mod1.text(),
+            "mod2": self.txt_mod2.text(),
+            "mod3": self.txt_mod3.text(),
+        }
         return [
-            (phys_map[idx], CHANNEL_LABELS[idx])
-            for idx, edits in enumerate(self._channel_metadata_edits)
+            {
+                "phys": f"{devices[edits['module']]}/ai{edits['ai']}",
+                "label": edits["label"],
+                "kind": edits["kind"],
+                "scale": edits["scale"].value(),
+                "offset": edits["offset"].value(),
+                "units": edits["units"].text().strip(),
+            }
+            for edits in self._channel_metadata_edits
             if edits["enabled"].isChecked()
         ]
 
@@ -1092,7 +1235,7 @@ class DaqController(QMainWindow):
         self.lbl_lastfile.setText("—")
         self.lbl_actual_rate.setText("—")
 
-        enabled_labels = {spec[1] for spec in channel_specs}
+        enabled_labels = {spec["label"] for spec in channel_specs}
         self._active_meters = []
         for meter, edits in zip(
             self._meters, self._channel_metadata_edits, strict=True

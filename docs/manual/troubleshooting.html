@@ -63,11 +63,13 @@ device, the device names in the application do not match what NI MAX shows.</p>
 <ol>
   <li>Open NI MAX and expand <em>Devices and Interfaces</em>.</li>
   <li>Note the exact device names (e.g., <code>cDAQ1Mod1</code>,
-      <code>cDAQ1Mod2</code>).</li>
-  <li>In the GUI, enter these names in the <em>Module 1 device</em> and
-      <em>Module 2 device</em> fields on the Acquire tab.</li>
-  <li>For the CLI, edit the <code>MODULE_1_DEVICE</code> and
-      <code>MODULE_2_DEVICE</code> constants in <code>daq.py</code>.</li>
+      <code>cDAQ1Mod2</code>, <code>cDAQ1Mod3</code>).</li>
+  <li>In the GUI, enter these names in the <em>Module 1 device</em>,
+      <em>Module 2 device</em>, and <em>Module 3 device</em> fields on the Acquire
+      tab.</li>
+  <li>For the CLI (accelerometer channels only), edit the
+      <code>MODULE_1_DEVICE</code> and <code>MODULE_2_DEVICE</code> constants in
+      <code>daq.py</code>.</li>
 </ol>
 
 <div class="note">
@@ -78,18 +80,19 @@ device, the device names in the application do not match what NI MAX shows.</p>
 
 <h3>USB disconnection during recording</h3>
 
-<p>If the USB cable is disconnected during an acquisition, the current block read
-will fail with a DAQ error. The GUI will show the error in a dialog and stop recording.
-All previously written CSV files are intact. Reconnect the chassis and start a new
-acquisition.</p>
+<p>If the USB-C cable to the cDAQ-9177 is disconnected during an acquisition, the
+current block read will fail with a DAQ error. The GUI will show the error in a
+dialog and stop recording. All previously written CSV files are intact. Reconnect
+the chassis and start a new acquisition.</p>
 
 <h2>Sample Rate Issues</h2>
 
 <h3>Actual rate differs from requested rate</h3>
 
-<p>The NI&nbsp;9230 derives its sample clock from internal dividers, so it can only
-produce certain exact rates. When you request a rate that is not achievable, the
-hardware silently rounds to the nearest supported value.</p>
+<p>The NI&nbsp;9234 and NI&nbsp;9215 derive their sample clock from internal
+dividers, so they can only produce certain exact rates. When you request a rate
+that is not achievable, the hardware silently rounds to the nearest supported
+value.</p>
 
 <p>The application handles this correctly:</p>
 <ul>
@@ -112,13 +115,24 @@ the hardware supports exactly, or account for the actual rate in your post-proce
 
 <h3>Level meters always show zero</h3>
 
-<p>If the level meters stay at zero during recording:</p>
+<p>If an accelerometer channel's meter stays at zero during recording:</p>
 <ul>
   <li>Check that the accelerometers are connected to the correct module inputs.</li>
   <li>Verify that IEPE excitation is set to 0.004&nbsp;A (not 0). A value of 0
       disables the constant-current source, and the sensors will not produce a
       signal.</li>
   <li>Tap gently on the sensor to confirm it responds.</li>
+</ul>
+
+<p>If a <strong>position channel</strong> (<code>Pos_Ch0</code>/<code>Pos_Ch1</code>)
+stays at zero:</p>
+<ul>
+  <li>Check that the Keyence controller's analog output is actually enabled and
+      wired to the correct NI&nbsp;9215 input.</li>
+  <li>Verify the Scale/Offset values on the Channels tab aren't both zero &mdash;
+      a scale of 0 will report zero regardless of the input voltage.</li>
+  <li>Confirm the target is within the sensor's measurement range (check the
+      Keyence controller's own display).</li>
 </ul>
 
 <h3>Level meters are red / signal looks saturated</h3>
@@ -140,6 +154,11 @@ causes:</p>
 <ul>
   <li>Make sure the <strong>sensitivity</strong> setting matches your sensor. The
       wrong value will scale all readings by the wrong factor.</li>
+  <li>For position channels, make sure the <strong>Scale/Offset</strong> values match
+      your Keyence controller's actual configured analog output range and
+      measurement range &mdash; these are not fixed constants and must be computed
+      per setup. An incorrect scale produces plausible-looking but wrong position
+      values.</li>
   <li>Check cable connections for loose BNC or LEMO connectors.</li>
   <li>Verify that the sensor is securely mounted. A loose sensor will rattle and
       produce spurious high-frequency noise.</li>
@@ -160,10 +179,10 @@ causes:</p>
 
 <h3>Running out of disk space</h3>
 
-<p>At 5&nbsp;kHz with 6 channels, the application writes roughly 30&nbsp;MB per
-minute. A one-hour recording produces about 1.8&nbsp;GB. Monitor your available disk
-space for long acquisitions. The application will report a write error if the disk
-is full, but previously saved files are not affected.</p>
+<p>At 5&nbsp;kHz with all 10 channels enabled, the application writes roughly
+50&nbsp;MB per minute. A one-hour recording produces about 3&nbsp;GB. Monitor your
+available disk space for long acquisitions. The application will report a write
+error if the disk is full, but previously saved files are not affected.</p>
 
 <h2>GUI-Specific Issues</h2>
 

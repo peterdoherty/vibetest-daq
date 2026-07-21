@@ -32,7 +32,7 @@
   <tr><th>Requirement</th><th>Minimum version</th><th>Where to get it</th></tr>
   <tr><td>Python</td><td>3.10</td><td>python.org or your system package manager</td></tr>
   <tr><td>NI-DAQmx driver</td><td>Latest</td><td>NI Package Manager (Windows) or ni.com</td></tr>
-  <tr><td>NI cDAQ-9174 + NI 9230 modules</td><td>&mdash;</td><td>Connected via USB and visible in NI MAX</td></tr>
+  <tr><td>NI cDAQ-9177 + 2&times;NI 9234 + NI 9215</td><td>&mdash;</td><td>Connected via USB-C and visible in NI MAX</td></tr>
 </table>
 
 <div class="warning">
@@ -44,10 +44,11 @@
 <h2>Step 1 &mdash; Verify Hardware in NI MAX</h2>
 
 <p>Open <strong>NI Measurement &amp; Automation Explorer</strong> (NI MAX) and expand
-<em>Devices and Interfaces</em>. You should see your cDAQ chassis and both NI&nbsp;9230
-modules listed. Note the device names &mdash; they will look like
-<code>cDAQ1Mod1</code> and <code>cDAQ1Mod2</code>. You will need these names in the
-application settings.</p>
+<em>Devices and Interfaces</em>. You should see your cDAQ-9177 chassis (connected via
+USB-C) and all three modules listed: two NI&nbsp;9234 accelerometer modules and one
+NI&nbsp;9215 voltage input module. Note the device names &mdash; they will look like
+<code>cDAQ1Mod1</code>, <code>cDAQ1Mod2</code>, and <code>cDAQ1Mod3</code>. You will
+need these names in the application settings.</p>
 
 <div class="note">
   <strong>Tip:</strong> If the modules do not appear, try a different USB port, check
@@ -104,8 +105,8 @@ mode so that changes to the source take effect immediately:</p>
 <h2>Step 5 &mdash; First Acquisition</h2>
 
 <ol>
-  <li>In the GUI, confirm that <em>Module 1 device</em> and <em>Module 2 device</em>
-      match the names you saw in NI MAX.</li>
+  <li>In the GUI, confirm that <em>Module 1 device</em>, <em>Module 2 device</em>, and
+      <em>Module 3 device</em> match the names you saw in NI MAX.</li>
   <li>Choose an output directory using the <strong>Browse</strong> button.</li>
   <li>Leave the sample rate at 5000&nbsp;Hz and block duration at 10&nbsp;s for a
       quick test.</li>

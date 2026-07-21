@@ -120,12 +120,12 @@ with <code>#</code>) and the <strong>data rows</strong>.</p>
 <p>Header lines carry metadata about the acquisition. Most CSV parsers skip lines
 starting with <code>#</code> automatically.</p>
 
-<pre><code># NI cDAQ-9174 / NI 9230 Vibration Data
+<pre><code># NI cDAQ-9177 / NI 9234 + NI 9215 Vibration &amp; Position Data
 # Block start (UTC): 2026-05-20T18:30:00
 # Block start (epoch s): 1779316200.000000
 # Sample rate (Hz):  5000.0
 # Samples:           50000
-# Channels:          6
+# Channels:          10
 # Sensitivity (mV/g):100.0
 # Units:             g (acceleration)
 # Test ID: FAN-SWEEP-001
@@ -136,11 +136,16 @@ starting with <code>#</code> automatically.</p>
 # Operator: J. Smith
 # Location: Lab 3
 # Test Notes: Baseline run, no load
+# Channel Mod1_Ch0 Units: g
+# Channel Mod1_Ch0 Sensor Type: accelerometer
 # Channel Mod1_Ch0 Axis: X
 # Channel Mod1_Ch0 Location: Top plate
 # Channel Mod1_Ch0 Sensor Serial: PCB-12345
+# Channel Pos_Ch0 Units: mm
+# Channel Pos_Ch0 Sensor Type: position
+# Channel Pos_Ch0 Location: Stage +X edge
 # --------------------------------------------------------------
-time_epoch_s,Mod1_Ch0,Mod1_Ch1,Mod1_Ch2,Mod2_Ch0,Mod2_Ch1,Mod2_Ch2</code></pre>
+time_epoch_s,Mod1_Ch0,Mod1_Ch1,Mod1_Ch2,Mod1_Ch3,Mod2_Ch0,Mod2_Ch1,Mod2_Ch2,Mod2_Ch3,Pos_Ch0,Pos_Ch1</code></pre>
 
 <p>System and channel metadata lines appear only when those fields were filled in.
 See <a href="metadata.html">Metadata</a> and <a href="channels.html">Channels</a>
@@ -151,12 +156,12 @@ for details.</p>
 <p>The last line before the data is the column header (not prefixed with
 <code>#</code>). Only enabled channels appear:</p>
 
-<pre><code>time_epoch_s,Mod1_Ch0,Mod1_Ch1,Mod1_Ch2,Mod2_Ch0,Mod2_Ch1,Mod2_Ch2</code></pre>
+<pre><code>time_epoch_s,Mod1_Ch0,Mod1_Ch1,Mod1_Ch2,Mod1_Ch3,Mod2_Ch0,Mod2_Ch1,Mod2_Ch2,Mod2_Ch3,Pos_Ch0,Pos_Ch1</code></pre>
 
 <h3>Data Rows</h3>
 
-<pre><code>1779316200.000000,0.0012345,-0.0023456,0.0034567,0.0011234,-0.0022345,0.0033456
-1779316200.000200,0.0012678,-0.0023789,0.0034890,0.0011567,-0.0022678,0.0033789</code></pre>
+<pre><code>1779316200.000000,0.0012345,-0.0023456,0.0034567,0.0009876,0.0011234,-0.0022345,0.0033456,0.0008765,12.3456,8.7654
+1779316200.000200,0.0012678,-0.0023789,0.0034890,0.0010012,0.0011567,-0.0022678,0.0033789,0.0009012,12.3461,8.7649</code></pre>
 
 <table>
   <tr><th>Column</th><th>Format</th><th>Description</th></tr>
@@ -167,10 +172,17 @@ for details.</p>
         1/<em>sample_rate</em>.</td>
   </tr>
   <tr>
-    <td>Channel columns</td>
+    <td>Accelerometer channel columns</td>
     <td>Up to 8 significant digits</td>
     <td>Acceleration in <em>g</em>. The NI-DAQmx driver applies the sensitivity
         calibration, so these are engineering units, not raw voltages.</td>
+  </tr>
+  <tr>
+    <td>Position channel columns</td>
+    <td>Up to 8 significant digits</td>
+    <td>Engineering units (e.g. mm) as configured by that channel's Scale/Offset on
+        the Channels tab. NI-DAQmx applies this as a linear custom scale, so these are
+        already converted from raw volts &mdash; not raw voltages either.</td>
   </tr>
 </table>
 
@@ -216,10 +228,10 @@ into memory.</p>
 │   ├── block_start_epoch_s   1779316200.0
 │   ├── sample_rate_hz        5000.0
 │   ├── n_samples             50000
-│   ├── n_channels            6
+│   ├── n_channels            10
 │   ├── sensitivity_mv_per_g  100.0
 │   ├── units                 "g"
-│   ├── channel_labels        ["Mod1_Ch0", "Mod1_Ch1", ...]
+│   ├── channel_labels        ["Mod1_Ch0", ..., "Mod2_Ch3", "Pos_Ch0", "Pos_Ch1"]
 │   ├── test_id               "FAN-SWEEP-001"        (if set)
 │   ├── dut_make              "Acme"                 (if set)
 │   ├── dut_model             "VX-10"                (if set)
@@ -252,6 +264,14 @@ into memory.</p>
   <tr><td><code>channel_labels</code></td><td>string array</td><td>Ordered list of channel names matching the columns of the data dataset</td></tr>
 </table>
 
+<div class="note">
+  <strong>Mixed channel types:</strong> <code>sensitivity_mv_per_g</code> and the
+  top-level <code>units</code> attribute describe the accelerometer (NI 9234)
+  channels' task-wide configuration only. Every channel's actual units — including
+  the NI 9215 position channels — are always given per channel by the
+  <code>Channel &lt;label&gt; Units</code> attribute described below.
+</div>
+
 <p>System metadata fields (<code>test_id</code>, <code>dut_make</code>,
 <code>dut_model</code>, <code>dut_serial</code>, <code>test_stand</code>,
 <code>operator</code>, <code>location</code>, <code>notes</code>) are stored as
@@ -271,7 +291,9 @@ additional root attributes when non-empty.</p>
     <td><code>data</code></td>
     <td>(n_samples, n_channels)</td>
     <td>float64</td>
-    <td>Acceleration readings in <em>g</em>. Column order matches
+    <td>Sensor readings, one column per channel: acceleration in <em>g</em> for the
+        accelerometer channels, and engineering units (per that channel's configured
+        Scale/Offset) for the NI 9215 position channels. Column order matches
         <code>channel_labels</code>.</td>
   </tr>
 </table>
@@ -324,16 +346,16 @@ variable-length text.</p>
 
 <table>
   <tr><th>Sample rate</th><th>Block duration</th><th>Channels</th><th>CSV</th><th>HDF5</th></tr>
-  <tr><td>5,000 Hz</td><td>1 s</td><td>6</td><td>~500 KB</td><td>~280 KB</td></tr>
-  <tr><td>5,000 Hz</td><td>10 s</td><td>6</td><td>~5 MB</td><td>~2.7 MB</td></tr>
-  <tr><td>12,800 Hz</td><td>10 s</td><td>6</td><td>~13 MB</td><td>~7 MB</td></tr>
-  <tr><td>5,000 Hz</td><td>10 s</td><td>3</td><td>~3 MB</td><td>~1.5 MB</td></tr>
+  <tr><td>5,000 Hz</td><td>1 s</td><td>10</td><td>~830 KB</td><td>~470 KB</td></tr>
+  <tr><td>5,000 Hz</td><td>10 s</td><td>10</td><td>~8.3 MB</td><td>~4.6 MB</td></tr>
+  <tr><td>12,800 Hz</td><td>10 s</td><td>10</td><td>~21 MB</td><td>~12 MB</td></tr>
+  <tr><td>5,000 Hz</td><td>10 s</td><td>8</td><td>~6.7 MB</td><td>~3.7 MB</td></tr>
 </table>
 
 <div class="warning">
   <strong>Disk space:</strong> Long continuous runs at high sample rates generate
-  large volumes of data. For a 5&nbsp;kHz, 6-channel acquisition using CSV, expect
-  roughly 1.7&nbsp;GB per hour. HDF5 cuts this to approximately 1&nbsp;GB per hour.
+  large volumes of data. For a 5&nbsp;kHz, 10-channel acquisition using CSV, expect
+  roughly 3&nbsp;GB per hour. HDF5 cuts this to approximately 1.7&nbsp;GB per hour.
   Monitor available disk space for long acquisitions.
 </div>
 

@@ -96,14 +96,16 @@ data is captured and where it is saved.</p>
   <tr>
     <td>IEPE excitation</td>
     <td>0.004&nbsp;A (4&nbsp;mA)</td>
-    <td>Constant-current excitation supplied to the IEPE sensors. The NI&nbsp;9230
-        typically accepts 0&nbsp;A (off) or 0.004&nbsp;A.</td>
+    <td>Constant-current excitation supplied to the IEPE sensors. The NI&nbsp;9234
+        typically accepts 0&nbsp;A (off) or 0.004&nbsp;A. This setting applies only
+        to the accelerometer channels &mdash; the NI&nbsp;9215 position channels use
+        no excitation.</td>
   </tr>
   <tr>
-    <td>Module 1 / Module 2 device</td>
-    <td><code>cDAQ1Mod1</code> / <code>cDAQ1Mod2</code></td>
-    <td>NI-DAQmx device names for the two NI&nbsp;9230 modules. These must match
-        what NI MAX reports.</td>
+    <td>Module 1 / Module 2 / Module 3 device</td>
+    <td><code>cDAQ1Mod1</code> / <code>cDAQ1Mod2</code> / <code>cDAQ1Mod3</code></td>
+    <td>NI-DAQmx device names for the two NI&nbsp;9234 accelerometer modules and the
+        NI&nbsp;9215 position module. These must match what NI MAX reports.</td>
   </tr>
   <tr>
     <td>File count</td>
@@ -137,7 +139,7 @@ switching to the Metadata tab.</p>
   Test: FAN-SWEEP-001<br>
   DUT: Acme VX-10 SN-42<br>
   Setup: Stand A | J. Smith | Lab 3<br>
-  Channels: Mod1_Ch0=Top X; Mod1_Ch1=Top Y; Mod1_Ch2=Top Z<br>
+  Channels: Mod1_Ch0=Top X; Mod1_Ch1=Top Y; Mod1_Ch2=Top Z; Pos_Ch0=Stage edge<br>
   Notes: Baseline run, no load
 </div>
 
@@ -171,9 +173,11 @@ is being captured.</p>
 
 <h2>Channel Level Meters</h2>
 
-<p>At the bottom of the Acquire tab, six horizontal bar meters show the <strong>peak
-acceleration</strong> (in <em>g</em>) for each channel during each block. The meters
-update once per block.</p>
+<p>At the bottom of the Acquire tab, ten horizontal bar meters show the <strong>peak
+reading</strong> for each channel during each block: peak acceleration (in <em>g</em>)
+for the eight accelerometer channels, and peak position (in that channel's configured
+units) for the two NI&nbsp;9215 position channels. The meters update once per
+block.</p>
 
 <h3>Color coding</h3>
 <table>
@@ -183,12 +187,20 @@ update once per block.</p>
   <tr><td style="color:#c0392b;font-weight:bold;">Red</td><td>Peak exceeds 80% of full scale &mdash; the sensor may be close to clipping</td></tr>
 </table>
 
-<h3>Full scale control</h3>
-<p>The <strong>Full scale</strong> spinner above the meters sets the reference level
-(in <em>g</em>) used for the color thresholds. Adjust it to match the expected
-vibration amplitude of your test. For example, if you expect peaks around
-0.5&nbsp;g, set full scale to 1.0&nbsp;g so the meters use the full bar
-range.</p>
+<h3>Full scale controls</h3>
+<p>Because the accelerometer and position channels report in very different units,
+there are two separate full-scale spinners above the meters:</p>
+
+<ul>
+  <li><strong>Accel full scale</strong> (in <em>g</em>) &mdash; sets the reference
+      level for the color thresholds on the eight accelerometer channels. For
+      example, if you expect peaks around 0.5&nbsp;g, set it to 1.0&nbsp;g so the
+      meters use the full bar range.</li>
+  <li><strong>Position full scale</strong> (in the position channels' configured
+      engineering units) &mdash; sets the reference level for <code>Pos_Ch0</code>
+      and <code>Pos_Ch1</code>. Set it to the expected full-scale travel of your
+      Keyence sensor, in the same units as the Units field on the Channels tab.</li>
+</ul>
 
 <div class="note">
   <strong>Note:</strong> Disabled channels show "off" instead of a meter bar.

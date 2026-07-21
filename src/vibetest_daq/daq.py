@@ -5,8 +5,8 @@
 vibration_daq.py
 ----------------
 Continuous vibration data acquisition using:
-  NI cDAQ-9174 chassis
-  Two NI 9230 IEPE accelerometer modules (6 channels total)
+  NI cDAQ-9177 chassis
+  Two NI 9234 IEPE accelerometer modules (8 channels total)
 
 Writes timestamped ASCII (.csv) files to a configurable output directory.
 Requires: nidaqmx, numpy
@@ -28,17 +28,19 @@ from nidaqmx.stream_readers import AnalogMultiChannelReader
 # ── Configuration ────────────────────────────────────────────────────────────
 
 # Chassis / module slot names (adjust to match your NI MAX device names)
-MODULE_1_DEVICE = "cDAQ1Mod1"  # First  NI 9230 — channels ai0, ai1, ai2
-MODULE_2_DEVICE = "cDAQ1Mod2"  # Second NI 9230 — channels ai0, ai1, ai2
+MODULE_1_DEVICE = "cDAQ1Mod1"  # First  NI 9234 — channels ai0-ai3
+MODULE_2_DEVICE = "cDAQ1Mod2"  # Second NI 9234 — channels ai0-ai3
 
 # Channel labels used in file headers
 CHANNEL_LABELS = [
     "Mod1_Ch0",
     "Mod1_Ch1",
     "Mod1_Ch2",
+    "Mod1_Ch3",
     "Mod2_Ch0",
     "Mod2_Ch1",
     "Mod2_Ch2",
+    "Mod2_Ch3",
 ]
 
 # Per-channel metadata written to file headers (CSV comment lines / HDF5
@@ -53,7 +55,7 @@ SAMPLE_RATE = 5000.0  # Hz  (≥ 2× max freq of interest; 2500 → 1250 Hz Nyqu
 BLOCK_DURATION = 1.0  # seconds per acquired block (also the file interval)
 SENSITIVITY = 100.0  # mV/g  — set to match your accelerometer datasheet
 IEPE_EXCITATION = 0.004  # A    (4 mA constant-current excitation for IEPE sensors)
-MAX_VOLTAGE = 5.0  # V    (NI 9230 input range)
+MAX_VOLTAGE = 5.0  # V    (NI 9234 input range)
 
 OUTPUT_DIR = "vibration_data"
 FILE_PREFIX = "vib"
@@ -127,7 +129,7 @@ def write_block(data: np.ndarray, ts: datetime.datetime, fs: float):
     t_axis = t0_epoch + np.arange(n_samp) / fs  # absolute UTC epoch time (s)
 
     header_lines = [
-        "# NI cDAQ-9174 / NI 9230 Vibration Data",
+        "# NI cDAQ-9177 / NI 9234 Vibration Data",
         f"# Block start (UTC): {ts.isoformat()}",
         f"# Block start (epoch s): {t0_epoch:.6f}",
         f"# Sample rate (Hz):  {fs}",
@@ -203,11 +205,14 @@ def run_acquisition(duration_s: float | None = None):
 
     with nidaqmx.Task() as task:
         # ── Add IEPE accelerometer channels ──────────────────────────────────
+        CHANNELS_PER_MODULE = 4  # NI 9234 has 4 channels
         for slot, dev in enumerate([MODULE_1_DEVICE, MODULE_2_DEVICE]):
-            for ch in range(3):  # 9230 has 3 channels
+            for ch in range(CHANNELS_PER_MODULE):
                 task.ai_channels.add_ai_accel_chan(
                     physical_channel=f"{dev}/ai{ch}",
-                    name_to_assign_to_channel=CHANNEL_LABELS[slot * 3 + ch],
+                    name_to_assign_to_channel=CHANNEL_LABELS[
+                        slot * CHANNELS_PER_MODULE + ch
+                    ],
                     terminal_config=TerminalConfiguration.DEFAULT,
                     min_val=-MAX_VOLTAGE / (SENSITIVITY / 1000),  # convert mV/g → V/g
                     max_val=MAX_VOLTAGE / (SENSITIVITY / 1000),

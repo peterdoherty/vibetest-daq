@@ -10,7 +10,7 @@
 
 <header>
   <h1>Vibetest DAQ Manual</h1>
-  <p>Vibration data acquisition for the NI&nbsp;cDAQ-9174 chassis and NI&nbsp;9230 IEPE accelerometer modules. Developed at the Smithsonian Astrophysical Observatory.</p>
+  <p>Vibration and position data acquisition for the NI&nbsp;cDAQ-9177 chassis, using NI&nbsp;9234 IEPE accelerometer modules and an NI&nbsp;9215 analog voltage module. Developed at the Smithsonian Astrophysical Observatory.</p>
 </header>
 
 <nav>
@@ -29,10 +29,11 @@
 <h2>What is Vibetest DAQ?</h2>
 
 <p>Vibetest DAQ is a data acquisition tool that records vibration measurements from
-IEPE (Integrated Electronics Piezo-Electric) accelerometers connected to National
-Instruments hardware. It saves each block of samples as a timestamped CSV file that
-you can later analyze with spectral analysis software, MATLAB, Python, or any tool
-that reads plain text.</p>
+IEPE (Integrated Electronics Piezo-Electric) accelerometers, together with position
+measurements from analog-output displacement sensors (such as Keyence LK-series
+laser sensors), connected to National Instruments hardware. It saves each block of
+samples as a timestamped CSV file that you can later analyze with spectral analysis
+software, MATLAB, Python, or any tool that reads plain text.</p>
 
 <p>The package provides two ways to run an acquisition:</p>
 
@@ -48,13 +49,25 @@ that reads plain text.</p>
 
 <table>
   <tr><th>Component</th><th>Model</th><th>Role</th></tr>
-  <tr><td>Chassis</td><td>NI cDAQ-9174</td><td>USB carrier for C-Series modules</td></tr>
-  <tr><td>Analog input modules</td><td>NI 9230 (x2)</td><td>3-channel 24-bit IEPE accelerometer input, up to 12.8&nbsp;kS/s per channel</td></tr>
-  <tr><td>Sensors</td><td>Any IEPE accelerometer</td><td>Converts mechanical vibration to an analog voltage signal</td></tr>
+  <tr><td>Chassis</td><td>NI cDAQ-9177</td><td>8-slot USB-C carrier for C-Series modules</td></tr>
+  <tr><td>Accelerometer input modules</td><td>NI 9234 (x2)</td><td>4-channel 24-bit IEPE accelerometer input, up to 51.2&nbsp;kS/s per channel</td></tr>
+  <tr><td>Position input module</td><td>NI 9215</td><td>4-channel &plusmn;10&nbsp;V simultaneous analog voltage input (used for position sensors)</td></tr>
+  <tr><td>Vibration sensors</td><td>Any IEPE accelerometer</td><td>Converts mechanical vibration to an analog voltage signal</td></tr>
+  <tr><td>Position sensors</td><td>Keyence LK-series laser displacement sensors (e.g. LK-G5001 controller)</td><td>Analog voltage output proportional to measured distance</td></tr>
 </table>
 
-<p>Each NI&nbsp;9230 module has three input channels, so two modules give you six
-channels total (Mod1_Ch0&ndash;Ch2, Mod2_Ch0&ndash;Ch2).</p>
+<p>Each NI&nbsp;9234 module has four input channels, so two modules give you eight
+accelerometer channels total (Mod1_Ch0&ndash;Ch3, Mod2_Ch0&ndash;Ch3). The NI&nbsp;9215
+provides two additional position channels (Pos_Ch0, Pos_Ch1) for Keyence sensor
+analog outputs — ten channels in all.</p>
+
+<div class="note">
+  <strong>Note:</strong> The NI&nbsp;9215 position channels do not use IEPE excitation
+  or a mV/g sensitivity — each has its own linear scale (engineering units per volt,
+  plus an offset) configured on the Channels tab. You must compute this scale from
+  your Keyence controller's configured analog output range and measurement range; see
+  <a href="channels.html">Channels</a>.
+</div>
 
 <h2>Table of Contents</h2>
 
@@ -72,9 +85,18 @@ channels total (Mod1_Ch0&ndash;Ch2, Mod2_Ch0&ndash;Ch2).</p>
 
 <h3>IEPE Sensors</h3>
 <p>IEPE accelerometers contain a built-in charge amplifier powered by a constant-current
-excitation (typically 4&nbsp;mA). The NI&nbsp;9230 supplies this current and reads
+excitation (typically 4&nbsp;mA). The NI&nbsp;9234 supplies this current and reads
 the resulting AC voltage. The <em>sensitivity</em> of the sensor (in mV/g) converts
 that voltage to acceleration in units of <em>g</em> (1&nbsp;g&nbsp;=&nbsp;9.81&nbsp;m/s&sup2;).</p>
+
+<h3>Position Sensors</h3>
+<p>The NI&nbsp;9215 has no IEPE excitation — it's a plain &plusmn;10&nbsp;V analog
+input, used here for the analog voltage output of a Keyence laser displacement
+sensor. Unlike the accelerometer channels, each position channel has its own
+independent linear scale (<em>value = scale &times; volts + offset</em>) so it can
+report directly in the sensor's engineering units (mm, &micro;m, etc.). That scale
+depends on how the Keyence controller's analog output range is configured relative
+to its measurement range, so it must be entered per channel rather than assumed.</p>
 
 <h3>Blocks and Files</h3>
 <p>Data is acquired continuously, but it is written to disk in fixed-length
