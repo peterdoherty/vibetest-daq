@@ -289,19 +289,14 @@ class DaqWorker(QObject):
 
     def _acquire(self):
         try:
-            import nidaqmx
-            from nidaqmx.constants import (
-                AccelSensitivityUnits,
-                AccelUnits,
-                AcquisitionType,
-                ExcitationSource,
-                TerminalConfiguration,
-                VoltageUnits,
+            from instruments.drivers.daq.ni_cdaq_task import (
+                AccelChannelSpec,
+                NICDaqTask,
+                NICDaqTaskError,
+                VoltageChannelSpec,
             )
-            from nidaqmx.scale import Scale
-            from nidaqmx.stream_readers import AnalogMultiChannelReader
         except ImportError as exc:
-            self.error.emit(f"nidaqmx not available: {exc}")
+            self.error.emit(f"isw-instruments (NICDaqTask) not available: {exc}")
             return
 
         cfg          = self._cfg
@@ -318,52 +313,45 @@ class DaqWorker(QObject):
         n_ch         = len(ch_labels)
         max_v        = DEFAULT_MAX_VOLTAGE
 
-        with nidaqmx.Task() as task:
-            for spec in channel_specs:
-                if spec["kind"] == "voltage":
-                    scale = Scale.create_lin_scale(
-                        f"vibetest_scale_{spec['label']}",
-                        slope=spec["scale"],
-                        y_intercept=spec["offset"],
-                        scaled_units=spec.get("units") or "V",
-                    )
-                    task.ai_channels.add_ai_voltage_chan(
+        task_channel_specs = []
+        for spec in channel_specs:
+            if spec["kind"] == "voltage":
+                task_channel_specs.append(
+                    VoltageChannelSpec(
                         physical_channel=spec["phys"],
-                        name_to_assign_to_channel=spec["label"],
-                        terminal_config=TerminalConfiguration.DEFAULT,
-                        min_val=-POSITION_MAX_VOLTAGE,
-                        max_val=POSITION_MAX_VOLTAGE,
-                        units=VoltageUnits.FROM_CUSTOM_SCALE,
-                        custom_scale_name=scale.name,
+                        label=spec["label"],
+                        max_voltage_v=POSITION_MAX_VOLTAGE,
+                        scale_slope=spec["scale"],
+                        scale_offset=spec["offset"],
+                        scale_units=spec.get("units") or "V",
                     )
-                else:
-                    task.ai_channels.add_ai_accel_chan(
+                )
+            else:
+                task_channel_specs.append(
+                    AccelChannelSpec(
                         physical_channel=spec["phys"],
-                        name_to_assign_to_channel=spec["label"],
-                        terminal_config=TerminalConfiguration.DEFAULT,
-                        min_val=-(max_v / (sensitivity / 1000)),
-                        max_val=  max_v / (sensitivity / 1000),
-                        units=AccelUnits.G,
-                        sensitivity=sensitivity,
-                        sensitivity_units=AccelSensitivityUnits.MILLIVOLTS_PER_G,
-                        current_excit_source=ExcitationSource.INTERNAL,
-                        current_excit_val=iepe_exc,
+                        label=spec["label"],
+                        sensitivity_mv_per_g=sensitivity,
+                        excitation_current_a=iepe_exc,
+                        max_voltage_v=max_v,
                     )
+                )
 
-            task.timing.cfg_samp_clk_timing(
-                rate=fs_req,
-                sample_mode=AcquisitionType.CONTINUOUS,
-                samps_per_chan=int(fs_req * block_dur) * 8,
+        try:
+            daq_task = NICDaqTask(channel_specs=task_channel_specs)
+        except (RuntimeError, NICDaqTaskError) as exc:
+            self.error.emit(str(exc))
+            return
+
+        with daq_task as task:
+            actual_fs = task.configure_clock(
+                fs_req, int(fs_req * block_dur), buffer_blocks=8
             )
-
-            actual_fs = task.timing.samp_clk_rate
             self.rate_confirmed.emit(actual_fs)
 
             # Recompute sample count using the actual hardware rate so each
             # file covers exactly block_dur seconds.
-            samps  = int(actual_fs * block_dur)
-            reader = AnalogMultiChannelReader(task.in_stream)
-            buf    = np.zeros((n_ch, samps), dtype=np.float64)
+            samps = int(actual_fs * block_dur)
 
             # Pre-compute write constants that are fixed for the whole session.
             _t_offsets = np.arange(samps) / actual_fs
@@ -436,17 +424,13 @@ class DaqWorker(QObject):
                     seconds=n * samps / actual_fs
                 )
                 try:
-                    reader.read_many_sample(
-                        buf,
-                        number_of_samples_per_channel=samps,
-                        timeout=block_dur * 2 + 5.0,
-                    )
-                except nidaqmx.errors.DaqError as exc:
+                    buf = task.read_block(samps, timeout_s=block_dur * 2 + 5.0)
+                except NICDaqTaskError as exc:
                     self.error.emit(str(exc))
                     break
 
                 n += 1
-                write_queue.put((n, buf.copy(), block_ts))
+                write_queue.put((n, buf, block_ts))
 
             task.stop()
 
