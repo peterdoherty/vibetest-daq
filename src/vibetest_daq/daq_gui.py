@@ -56,9 +56,9 @@ POSITION_MAX_VOLTAGE    = 10.0  # V — NI 9215 input range
 DEFAULT_OUTPUT_DIR      = "vibration_data"
 DEFAULT_FILE_PREFIX     = "vib"
 DEFAULT_FILE_COUNT      = 10
-DEFAULT_MODULE_1        = "cDAQ1Mod1"
-DEFAULT_MODULE_2        = "cDAQ1Mod2"
-DEFAULT_MODULE_3        = "cDAQ1Mod3"
+DEFAULT_MODULE_1        = "cDAQ2Mod1"
+DEFAULT_MODULE_2        = "cDAQ2Mod2"
+DEFAULT_MODULE_3        = "cDAQ2Mod3"
 
 # Fixed hardware wiring: which physical module/input each channel comes
 # from, and what kind of nidaqmx channel it requires. This is intentionally
@@ -87,13 +87,13 @@ CHANNEL_DEFS = [
     _accel_chdef("Mod1_Ch0", "mod1", 0, "X"),
     _accel_chdef("Mod1_Ch1", "mod1", 1, "Y"),
     _accel_chdef("Mod1_Ch2", "mod1", 2, "Z"),
-    _accel_chdef("Mod1_Ch3", "mod1", 3, ""),
-    _accel_chdef("Mod2_Ch0", "mod2", 0, "X"),
-    _accel_chdef("Mod2_Ch1", "mod2", 1, "Y"),
-    _accel_chdef("Mod2_Ch2", "mod2", 2, "Z"),
-    _accel_chdef("Mod2_Ch3", "mod2", 3, ""),
-    _position_chdef("Pos_Ch0", "mod3", 0),
-    _position_chdef("Pos_Ch1", "mod3", 1),
+    # _accel_chdef("Mod1_Ch3", "mod1", 3, ""),
+    # _accel_chdef("Mod2_Ch0", "mod2", 0, "X"),
+    # _accel_chdef("Mod2_Ch1", "mod2", 1, "Y"),
+    # _accel_chdef("Mod2_Ch2", "mod2", 2, "Z"),
+    # _accel_chdef("Mod2_Ch3", "mod2", 3, ""),
+    _position_chdef("Pos_Ch0", "mod2", 0),
+    _position_chdef("Pos_Ch1", "mod2", 1),
 ]
 CHANNEL_LABELS = [d["label"] for d in CHANNEL_DEFS]
 DEFAULT_CHANNEL_AXES = [d["axis"] for d in CHANNEL_DEFS]
