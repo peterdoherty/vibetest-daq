@@ -17,7 +17,9 @@ import argparse
 import datetime
 import logging
 import os
+import queue
 import signal
+import threading
 import time
 
 import nidaqmx
@@ -115,18 +117,31 @@ def channel_metadata_items(labels: list[str]) -> list[tuple[str, str]]:
 # ── Helper: write one block to ASCII CSV ──────────────────────────────────────
 
 
-def write_block(data: np.ndarray, ts: datetime.datetime, fs: float):
+def write_block(
+    data: np.ndarray,
+    ts: datetime.datetime,
+    fs: float,
+    _t_offsets: np.ndarray | None = None,
+    _out_buf: np.ndarray | None = None,
+    _fmt: str | None = None,
+):
     """
     data  : shape (n_channels, n_samples)  — engineering units (g)
     ts    : datetime of the first sample in the block
     fs    : sample rate in Hz
+
+    The trailing `_`-prefixed args let the caller precompute the per-sample
+    time offsets, the (n_samples, 1+n_channels) scratch buffer, and the
+    savetxt format string once per acquisition session instead of once per
+    block, since none of them change block-to-block.
     """
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     path = make_filename(ts)
 
     n_ch, n_samp = data.shape
     t0_epoch = ts.timestamp()  # UTC seconds since Unix epoch for first sample
-    t_axis = t0_epoch + np.arange(n_samp) / fs  # absolute UTC epoch time (s)
+    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
+    t_axis = t0_epoch + t_offsets  # absolute UTC epoch time (s)
 
     header_lines = [
         "# NI cDAQ-9177 / NI 9234 Vibration Data",
@@ -148,21 +163,27 @@ def write_block(data: np.ndarray, ts: datetime.datetime, fs: float):
     header = "\n".join(header_lines)
 
     # Stack time axis + data rows  →  (n_samples, 1 + n_channels)
-    block_out = np.column_stack([t_axis, data.T])
+    if _out_buf is not None:
+        _out_buf[:, 0] = t_axis
+        _out_buf[:, 1:] = data.T
+        block_out = _out_buf
+    else:
+        block_out = np.column_stack([t_axis, data.T])
 
-    np.savetxt(
-        path,
-        block_out,
-        delimiter=",",
-        header=header,
-        comments="",
-        fmt="%.6f," + ",".join(["%.8g"] * n_ch),
-    )
+    fmt = _fmt if _fmt is not None else "%.6f," + ",".join(["%.8g"] * n_ch)
+    with open(path, "w", buffering=1 << 16) as f:
+        f.write(header + "\n")
+        np.savetxt(f, block_out, delimiter=",", fmt=fmt)
     log.info("Saved %s  (%d samples × %d channels)", path, n_samp, n_ch)
     return path
 
 
-def write_block_hdf5(data: np.ndarray, ts: datetime.datetime, fs: float):
+def write_block_hdf5(
+    data: np.ndarray,
+    ts: datetime.datetime,
+    fs: float,
+    _t_offsets: np.ndarray | None = None,
+):
     import h5py
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -171,7 +192,8 @@ def write_block_hdf5(data: np.ndarray, ts: datetime.datetime, fs: float):
 
     n_ch, n_samp = data.shape
     t0_epoch = ts.timestamp()
-    t_axis = t0_epoch + np.arange(n_samp) / fs
+    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
+    t_axis = t0_epoch + t_offsets
 
     with h5py.File(path, "w") as f:
         f.attrs["block_start_utc"] = ts.isoformat()
@@ -250,6 +272,45 @@ def run_acquisition(duration_s: float | None = None):
         reader = AnalogMultiChannelReader(task.in_stream)
         buf = np.zeros((len(CHANNEL_LABELS), SAMPLES_PER_BLOCK), dtype=np.float64)
 
+        # Precompute the per-block time offsets, scratch output buffer, and
+        # savetxt format string once — none of them change block-to-block —
+        # instead of reallocating them on every write.
+        n_ch = len(CHANNEL_LABELS)
+        t_offsets = np.arange(SAMPLES_PER_BLOCK) / actual_fs
+        out_buf = np.empty((SAMPLES_PER_BLOCK, n_ch + 1), dtype=np.float64)
+        fmt = "%.6f," + ",".join(["%.8g"] * n_ch)
+
+        # File writes happen on a background thread so a slow disk can never
+        # stall the read loop below and cause the on-board DAQ buffer to
+        # overrun.
+        write_queue: queue.Queue = queue.Queue()
+
+        def _writer():
+            while True:
+                item = write_queue.get()
+                if item is None:
+                    break
+                blk_data, blk_ts = item
+                try:
+                    if OUTPUT_FORMAT == "hdf5":
+                        write_block_hdf5(
+                            blk_data, blk_ts, actual_fs, _t_offsets=t_offsets
+                        )
+                    else:
+                        write_block(
+                            blk_data,
+                            blk_ts,
+                            actual_fs,
+                            _t_offsets=t_offsets,
+                            _out_buf=out_buf,
+                            _fmt=fmt,
+                        )
+                except Exception:
+                    log.exception("Failed to write block")
+
+        writer = threading.Thread(target=_writer, daemon=True)
+        writer.start()
+
         # Capture the acquisition start time immediately before task.start() so
         # that block timestamps are derived from sample count rather than wall
         # clock calls inside the loop.  This eliminates the per-block jitter
@@ -286,13 +347,13 @@ def run_acquisition(duration_s: float | None = None):
                 log.error("DAQ read error: %s", exc)
                 break
 
-            if OUTPUT_FORMAT == "hdf5":
-                write_block_hdf5(buf.copy(), block_ts, actual_fs)
-            else:
-                write_block(buf.copy(), block_ts, actual_fs)
+            write_queue.put((buf.copy(), block_ts))
             n_blocks += 1
 
         task.stop()
+
+        write_queue.put(None)
+        writer.join()
         log.info("Acquisition stopped after %d block(s).", n_blocks)
 
 
