@@ -12,14 +12,9 @@ Runs acquisition in a background thread so the UI stays responsive.
 Settings are locked while recording and restored on stop.
 """
 
-import datetime
 import os
-import queue
 import sys
-import threading
-import time
 
-import numpy as np
 from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,14 +40,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from vibetest_daq.acquisition import (
+    CHANNEL_DEFS,
+    CHANNEL_SENSOR_TYPES,
+    DEFAULT_CHANNEL_AXES,
+    run_acquisition,
+)
+
 # ── Defaults (mirrors daq.py constants) ──────────────────────────────────────
 
 DEFAULT_SAMPLE_RATE     = 5000.0
 DEFAULT_BLOCK_DURATION  = 10.0
 DEFAULT_SENSITIVITY     = 100.0
 DEFAULT_IEPE_EXCITATION = 0.004
-DEFAULT_MAX_VOLTAGE     = 5.0   # V — NI 9234 IEPE input range
-POSITION_MAX_VOLTAGE    = 10.0  # V — NI 9215 input range
 DEFAULT_OUTPUT_DIR      = "vibration_data"
 DEFAULT_FILE_PREFIX     = "vib"
 DEFAULT_FILE_COUNT      = 10
@@ -60,206 +60,9 @@ DEFAULT_MODULE_1        = "cDAQ2Mod1"
 DEFAULT_MODULE_2        = "cDAQ2Mod2"
 DEFAULT_MODULE_3        = "cDAQ2Mod3"
 
-# Fixed hardware wiring: which physical module/input each channel comes
-# from, and what kind of nidaqmx channel it requires. This is intentionally
-# separate from the user-editable "sensor type" metadata field below (which
-# is free text for CSV/HDF5 labeling only) so that relabeling a channel in
-# the Channels tab can never change how it's actually configured on the DAQ.
-#   "accel"   -> IEPE accelerometer input (NI 9234), uses the task-wide
-#                Sensitivity / IEPE excitation settings.
-#   "voltage" -> plain analog voltage input (NI 9215), scaled to engineering
-#                units via the per-channel Scale/Offset fields below.
-def _accel_chdef(label, module, ai, axis):
-    return {
-        "label": label, "kind": "accel", "module": module, "ai": ai,
-        "axis": axis, "sensor_type": "accelerometer", "units": "g",
-    }
-
-
-def _position_chdef(label, module, ai):
-    return {
-        "label": label, "kind": "voltage", "module": module, "ai": ai,
-        "axis": "", "sensor_type": "position", "units": "mm",
-    }
-
-
-CHANNEL_DEFS = [
-    _accel_chdef("Mod1_Ch0", "mod1", 0, "X"),
-    _accel_chdef("Mod1_Ch1", "mod1", 1, "Y"),
-    _accel_chdef("Mod1_Ch2", "mod1", 2, "Z"),
-    # _accel_chdef("Mod1_Ch3", "mod1", 3, ""),
-    # _accel_chdef("Mod2_Ch0", "mod2", 0, "X"),
-    # _accel_chdef("Mod2_Ch1", "mod2", 1, "Y"),
-    # _accel_chdef("Mod2_Ch2", "mod2", 2, "Z"),
-    # _accel_chdef("Mod2_Ch3", "mod2", 3, ""),
-    _position_chdef("Pos_Ch0", "mod2", 0),
-    _position_chdef("Pos_Ch1", "mod2", 1),
-]
-CHANNEL_LABELS = [d["label"] for d in CHANNEL_DEFS]
-DEFAULT_CHANNEL_AXES = [d["axis"] for d in CHANNEL_DEFS]
-CHANNEL_SENSOR_TYPES = ["accelerometer", "position"]
-
-# Per-channel header keys shared with vibetest-analyzer: written as
-# "# Channel <label> <Key>: <value>" CSV comment lines, or as HDF5 file
-# attributes with the identical "Channel <label> <Key>" key strings.
-CHANNEL_METADATA_KEYS = {
-    "units": "Units",
-    "sensor_type": "Sensor Type",
-    "bandwidth_hz": "Bandwidth (Hz)",
-    "axis": "Axis",
-    "location": "Location",
-    "sensor_serial": "Sensor Serial",
-}
-
-
-# ── CSV writer (self-contained; keeps daq_gui independent of daq.py) ─────────
-
-def _write_block(
-    data,
-    ts,
-    fs,
-    output_dir,
-    file_prefix,
-    channel_labels,
-    sensitivity,
-    system_metadata=None,
-    channel_metadata=None,
-    _t_offsets=None,
-    _out_buf=None,
-    _fmt=None,
-):
-    system_metadata = system_metadata or {}
-    channel_metadata = channel_metadata or []
-    os.makedirs(output_dir, exist_ok=True)
-    stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    path  = os.path.join(output_dir, f"{file_prefix}_{stamp}.csv")
-
-    n_ch, n_samp = data.shape
-    t0_epoch = ts.timestamp()
-    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
-    t_axis    = t0_epoch + t_offsets
-
-    header_lines = [
-        "# NI cDAQ-9177 / NI 9234 + NI 9215 Vibration & Position Data",
-        f"# Block start (UTC): {ts.isoformat()}",
-        f"# Block start (epoch s): {t0_epoch:.6f}",
-        f"# Sample rate (Hz):  {fs}",
-        f"# Samples:           {n_samp}",
-        f"# Channels:          {n_ch}",
-        f"# Sensitivity (mV/g):{sensitivity}",
-        "# Units:             g (acceleration)",
-    ]
-    header_labels = {
-        "test_id": "Test ID",
-        "dut_make": "DUT Make",
-        "dut_model": "DUT Model",
-        "dut_serial": "DUT Serial Number",
-        "test_stand": "Test Stand",
-        "operator": "Operator",
-        "location": "Location",
-        "notes": "Test Notes",
-    }
-    for key, label in header_labels.items():
-        value = str(system_metadata.get(key, "")).strip()
-        if not value:
-            continue
-        if key == "notes":
-            value = " | ".join(
-                line.strip() for line in value.splitlines() if line.strip()
-            )
-            if value:
-                header_lines.append(f"# {label}: {value}")
-        else:
-            header_lines.append(f"# {label}: {value}")
-    for channel_label, channel_meta in zip(
-        channel_labels, channel_metadata, strict=False
-    ):
-        for key, label in CHANNEL_METADATA_KEYS.items():
-            value = str(channel_meta.get(key, "")).strip()
-            if value:
-                header_lines.append(f"# Channel {channel_label} {label}: {value}")
-    header_lines.extend([
-        "# " + "-" * 60,
-        "time_epoch_s," + ",".join(channel_labels),
-    ])
-    header = "\n".join(header_lines)
-
-    if _out_buf is not None:
-        _out_buf[:, 0] = t_axis
-        _out_buf[:, 1:] = data.T
-        block_out = _out_buf
-    else:
-        block_out = np.column_stack([t_axis, data.T])
-
-    fmt = _fmt if _fmt is not None else "%.6f," + ",".join(["%.8g"] * n_ch)
-    with open(path, "w", buffering=1 << 16) as f:
-        f.write(header + "\n")
-        np.savetxt(f, block_out, delimiter=",", fmt=fmt)
-    return path
-
-
-def _write_block_hdf5(
-    data,
-    ts,
-    fs,
-    output_dir,
-    file_prefix,
-    channel_labels,
-    sensitivity,
-    system_metadata=None,
-    channel_metadata=None,
-    _t_offsets=None,
-):
-    import h5py
-
-    system_metadata = system_metadata or {}
-    channel_metadata = channel_metadata or []
-    os.makedirs(output_dir, exist_ok=True)
-    stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    path  = os.path.join(output_dir, f"{file_prefix}_{stamp}.h5")
-
-    n_ch, n_samp = data.shape
-    t0_epoch = ts.timestamp()
-    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
-    t_axis = t0_epoch + t_offsets
-
-    with h5py.File(path, "w") as f:
-        f.attrs["block_start_utc"] = ts.isoformat()
-        f.attrs["block_start_epoch_s"] = t0_epoch
-        f.attrs["sample_rate_hz"] = fs
-        f.attrs["n_samples"] = n_samp
-        f.attrs["n_channels"] = n_ch
-        f.attrs["sensitivity_mv_per_g"] = sensitivity
-        f.attrs["units"] = "g"
-        f.attrs["channel_labels"] = channel_labels
-
-        # Attribute names match the analyzer's CSV header keys so both
-        # formats produce identical metadata dictionaries on load.
-        system_attr_labels = {
-            "test_id": "Test ID",
-            "dut_make": "DUT Make",
-            "dut_model": "DUT Model",
-            "dut_serial": "DUT Serial Number",
-            "test_stand": "Test Stand",
-            "operator": "Operator",
-            "location": "Location",
-            "notes": "Test Notes",
-        }
-        for key, label in system_attr_labels.items():
-            value = str(system_metadata.get(key, "")).strip()
-            if value:
-                f.attrs[label] = value
-
-        for ch_label, ch_meta in zip(channel_labels, channel_metadata, strict=False):
-            for key, label in CHANNEL_METADATA_KEYS.items():
-                value = str(ch_meta.get(key, "")).strip()
-                if value:
-                    f.attrs[f"Channel {ch_label} {label}"] = value
-
-        f.create_dataset("time_epoch_s", data=t_axis)
-        f.create_dataset("data", data=data.T)
-
-    return path
+# Channel layout (CHANNEL_DEFS), per-channel metadata keys, and file writers
+# live in vibetest_daq.acquisition, shared with daq.py, so the two entry
+# points can't silently diverge in channel layout or output format.
 
 
 # ── DAQ worker (runs in a QThread) ───────────────────────────────────────────
@@ -288,164 +91,16 @@ class DaqWorker(QObject):
             self.finished.emit()
 
     def _acquire(self):
-        try:
-            from instruments.drivers.daq.ni_cdaq_task import (
-                AccelChannelSpec,
-                NICDaqTask,
-                NICDaqTaskError,
-                VoltageChannelSpec,
-            )
-        except ImportError as exc:
-            self.error.emit(f"isw-instruments (NICDaqTask) not available: {exc}")
-            return
-
-        cfg          = self._cfg
-        fs_req       = cfg["sample_rate"]
-        block_dur    = cfg["block_duration"]
-        sensitivity  = cfg["sensitivity"]
-        iepe_exc     = cfg["iepe_excitation"]
-        output_dir   = cfg["output_dir"]
-        file_prefix  = cfg["file_prefix"]
-        channel_specs = cfg["channel_specs"]  # see _enabled_channel_specs
-        ch_labels    = [s["label"] for s in channel_specs]
-        system_meta  = cfg["system_metadata"]
-        channel_meta = cfg["channel_metadata"]
-        n_ch         = len(ch_labels)
-        max_v        = DEFAULT_MAX_VOLTAGE
-
-        task_channel_specs = []
-        for spec in channel_specs:
-            if spec["kind"] == "voltage":
-                task_channel_specs.append(
-                    VoltageChannelSpec(
-                        physical_channel=spec["phys"],
-                        label=spec["label"],
-                        max_voltage_v=POSITION_MAX_VOLTAGE,
-                        scale_slope=spec["scale"],
-                        scale_offset=spec["offset"],
-                        scale_units=spec.get("units") or "V",
-                    )
-                )
-            else:
-                task_channel_specs.append(
-                    AccelChannelSpec(
-                        physical_channel=spec["phys"],
-                        label=spec["label"],
-                        sensitivity_mv_per_g=sensitivity,
-                        excitation_current_a=iepe_exc,
-                        max_voltage_v=max_v,
-                    )
-                )
-
-        try:
-            daq_task = NICDaqTask(channel_specs=task_channel_specs)
-        except (RuntimeError, NICDaqTaskError) as exc:
-            self.error.emit(str(exc))
-            return
-
-        with daq_task as task:
-            actual_fs = task.configure_clock(
-                fs_req, int(fs_req * block_dur), buffer_blocks=8
-            )
-            self.rate_confirmed.emit(actual_fs)
-
-            # Recompute sample count using the actual hardware rate so each
-            # file covers exactly block_dur seconds.
-            samps = int(actual_fs * block_dur)
-
-            # Pre-compute write constants that are fixed for the whole session.
-            _t_offsets = np.arange(samps) / actual_fs
-            _out_buf   = np.empty((samps, n_ch + 1), dtype=np.float64)
-            _fmt       = "%.6f," + ",".join(["%.8g"] * n_ch)
-            output_format = cfg.get("output_format", "csv")
-
-            # Writer thread: CSV writes are decoupled from the read loop so the
-            # hardware buffer never stalls waiting for disk I/O.
-            write_queue  = queue.Queue()
-            result_queue = queue.Queue()
-
-            def _writer():
-                while True:
-                    item = write_queue.get()
-                    if item is None:
-                        break
-                    blk_n, blk_data, blk_ts = item
-                    try:
-                        if output_format == "hdf5":
-                            path = _write_block_hdf5(
-                                blk_data, blk_ts, actual_fs,
-                                output_dir, file_prefix, ch_labels, sensitivity,
-                                system_meta, channel_meta,
-                                _t_offsets=_t_offsets,
-                            )
-                        else:
-                            path = _write_block(
-                                blk_data, blk_ts, actual_fs,
-                                output_dir, file_prefix, ch_labels, sensitivity,
-                                system_meta, channel_meta,
-                                _t_offsets=_t_offsets,
-                                _out_buf=_out_buf,
-                                _fmt=_fmt,
-                            )
-                        peaks = np.max(np.abs(blk_data), axis=1).tolist()
-                        result_queue.put((blk_n, path, peaks, None))
-                    except Exception as exc:
-                        result_queue.put((blk_n, None, None, str(exc)))
-
-            writer = threading.Thread(target=_writer, daemon=True)
-            writer.start()
-
-            acq_start = datetime.datetime.utcnow()
-            task.start()
-            t0 = time.monotonic()
-            n  = 0
-            max_blocks = (
-                None if cfg.get("continuous", True)
-                else max(1, int(cfg.get("file_count", 1)))
-            )
-
-            while not self._stop:
-                if max_blocks is not None and n >= max_blocks:
-                    break
-                # Emit signals for any blocks the writer has finished.
-                while True:
-                    try:
-                        blk_n, path, peaks, err = result_queue.get_nowait()
-                        if err is not None:
-                            self.error.emit(err)
-                        else:
-                            self.block_done.emit(
-                                blk_n, path, time.monotonic() - t0, peaks
-                            )
-                    except queue.Empty:
-                        break
-
-                block_ts = acq_start + datetime.timedelta(
-                    seconds=n * samps / actual_fs
-                )
-                try:
-                    buf = task.read_block(samps, timeout_s=block_dur * 2 + 5.0)
-                except NICDaqTaskError as exc:
-                    self.error.emit(str(exc))
-                    break
-
-                n += 1
-                write_queue.put((n, buf, block_ts))
-
-            task.stop()
-
-            # Shut down writer and drain remaining results.
-            write_queue.put(None)
-            writer.join()
-            while True:
-                try:
-                    blk_n, path, peaks, err = result_queue.get_nowait()
-                    if err is not None:
-                        self.error.emit(err)
-                    else:
-                        self.block_done.emit(blk_n, path, time.monotonic() - t0, peaks)
-                except queue.Empty:
-                    break
+        # The hardware-facing acquisition loop is shared with daq.py's
+        # headless CLI (see vibetest_daq.acquisition.run_acquisition) — this
+        # method only adapts its plain callbacks to this worker's Qt signals.
+        run_acquisition(
+            self._cfg,
+            on_rate_confirmed=self.rate_confirmed.emit,
+            on_block_done=lambda *args: self.block_done.emit(*args),
+            on_error=self.error.emit,
+            should_stop=lambda: self._stop,
+        )
 
 
 # ── Level meter widget ────────────────────────────────────────────────────────

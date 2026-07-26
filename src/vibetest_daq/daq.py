@@ -2,71 +2,64 @@
 #  Smithsonian Astrophysical Observatory, Cambridge, MA, USA
 #  For conditions of distribution and use, see copyright notice in "copyright"
 """
-vibration_daq.py
-----------------
-Continuous vibration data acquisition using:
-  NI cDAQ-9177 chassis
-  Two NI 9234 IEPE accelerometer modules (8 channels total)
+daq.py
+------
+Headless CLI vibration + position data acquisition using:
+  NI cDAQ chassis: two NI 9234 IEPE accelerometer modules (triax
+  accelerometer) and one NI 9215 analog voltage module (Keyence laser
+  position sensors).
 
-Writes timestamped ASCII (.csv) files to a configurable output directory.
-Requires: nidaqmx, numpy
+Shares its channel layout, per-channel metadata keys, CSV/HDF5 writers, and
+acquisition loop with daq_gui.py via vibetest_daq.acquisition — see that
+module for the channel layout (vibetest_daq.acquisition.CHANNEL_DEFS).
+
+System metadata (Test ID, DUT, operator, notes, ...) and per-channel
+overrides (engineering-unit Scale/Offset calibration, units, axis, location,
+sensor serial, bandwidth) are supplied via an optional --metadata-file JSON
+file:
+
+    {
+      "system": {"test_id": "...", "dut_make": "...", "operator": "...", ...},
+      "channels": {
+        "Pos_Ch0": {"scale": 12.5, "offset": 0.0, "location": "stage +X edge"}
+      }
+    }
+
+Fields omitted from the file fall back to vibetest_daq.acquisition
+.CHANNEL_DEFS defaults (scale=1.0/offset=0.0 placeholders, empty system
+metadata) — the same graceful defaults daq_gui.py uses for unedited fields.
+A missing --metadata-file means no system metadata and default scale/offset
+for every channel.
+
+Writes timestamped CSV or HDF5 files to a configurable output directory.
+Requires: isw-instruments, numpy (h5py only for --format hdf5)
   pip install -e .
 """
 
 import argparse
-import datetime
+import json
 import logging
-import os
-import queue
 import signal
-import threading
 import time
 
-import nidaqmx
-import numpy as np
-from nidaqmx.constants import AcquisitionType, ExcitationSource, TerminalConfiguration
-from nidaqmx.stream_readers import AnalogMultiChannelReader
+from vibetest_daq import acquisition
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-# Chassis / module slot names (adjust to match your NI MAX device names)
-MODULE_1_DEVICE = "cDAQ1Mod1"  # First  NI 9234 — channels ai0-ai3
-MODULE_2_DEVICE = "cDAQ1Mod2"  # Second NI 9234 — channels ai0-ai3
+# Chassis / module slot names (adjust to match your NI MAX device names) —
+# mirrors daq_gui.py's Acquisition Settings tab defaults.
+DEFAULT_MODULE_1 = "cDAQ2Mod1"
+DEFAULT_MODULE_2 = "cDAQ2Mod2"
+DEFAULT_MODULE_3 = "cDAQ2Mod3"  # NI 9215 — Pos_Ch0/Pos_Ch1
 
-# Channel labels used in file headers
-CHANNEL_LABELS = [
-    "Mod1_Ch0",
-    "Mod1_Ch1",
-    "Mod1_Ch2",
-    "Mod1_Ch3",
-    "Mod2_Ch0",
-    "Mod2_Ch1",
-    "Mod2_Ch2",
-    "Mod2_Ch3",
-]
-
-# Per-channel metadata written to file headers (CSV comment lines / HDF5
-# attributes) so analyzer reports are self-describing.  Keys follow the
-# vibetest-analyzer convention: "Channel <label> Units", "Channel <label>
-# Sensor Type", "Channel <label> Bandwidth (Hz)".
-CHANNEL_UNITS = "g"
-CHANNEL_SENSOR_TYPE = "accelerometer"
-CHANNEL_BANDWIDTH_HZ = None  # usable sensor bandwidth from the datasheet, e.g. 3000.0
-
-SAMPLE_RATE = 5000.0  # Hz  (≥ 2× max freq of interest; 2500 → 1250 Hz Nyquist)
+SAMPLE_RATE = 5000.0  # Hz — default requested rate, overridable via --rate
 BLOCK_DURATION = 1.0  # seconds per acquired block (also the file interval)
-SENSITIVITY = 100.0  # mV/g  — set to match your accelerometer datasheet
-IEPE_EXCITATION = 0.004  # A    (4 mA constant-current excitation for IEPE sensors)
-MAX_VOLTAGE = 5.0  # V    (NI 9234 input range)
+SENSITIVITY = 100.0  # mV/g — set to match your accelerometer datasheet
+IEPE_EXCITATION = 0.004  # A  (4 mA constant-current excitation for IEPE sensors)
 
 OUTPUT_DIR = "vibration_data"
 FILE_PREFIX = "vib"
-OUTPUT_FORMAT = "csv"
 LOG_LEVEL = logging.INFO
-
-# ── Derived constants ─────────────────────────────────────────────────────────
-
-SAMPLES_PER_BLOCK = int(SAMPLE_RATE * BLOCK_DURATION)
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 
@@ -90,327 +83,175 @@ def _handle_sigint(sig, frame):
 
 signal.signal(signal.SIGINT, _handle_sigint)
 
-# ── Helper: build output filename ─────────────────────────────────────────────
+
+# ── Metadata file loading ──────────────────────────────────────────────────────
 
 
-def make_filename(ts: datetime.datetime) -> str:
-    stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]  # ms precision
-    return os.path.join(OUTPUT_DIR, f"{FILE_PREFIX}_{stamp}.csv")
+def load_metadata_file(path):
+    """(system_metadata, channel_overrides) from a --metadata-file JSON file.
 
-
-# ── Helper: per-channel metadata header entries ──────────────────────────────
-
-
-def channel_metadata_items(labels: list[str]) -> list[tuple[str, str]]:
-    """(key, value) pairs describing each channel, in analyzer header format."""
-    items = []
-    for label in labels:
-        items.append((f"Channel {label} Units", CHANNEL_UNITS))
-        items.append((f"Channel {label} Sensor Type", CHANNEL_SENSOR_TYPE))
-        if CHANNEL_BANDWIDTH_HZ is not None:
-            items.append(
-                (f"Channel {label} Bandwidth (Hz)", f"{CHANNEL_BANDWIDTH_HZ:g}")
-            )
-    return items
-
-
-# ── Helper: write one block to ASCII CSV ──────────────────────────────────────
-
-
-def write_block(
-    data: np.ndarray,
-    ts: datetime.datetime,
-    fs: float,
-    _t_offsets: np.ndarray | None = None,
-    _out_buf: np.ndarray | None = None,
-    _fmt: str | None = None,
-):
+    channel_overrides maps a channel label (e.g. "Pos_Ch0") to a partial
+    override dict — any of sensor_type/units/bandwidth_hz/axis/location/
+    sensor_serial/scale/offset. Returns ({}, {}) when path is falsy.
     """
-    data  : shape (n_channels, n_samples)  — engineering units (g)
-    ts    : datetime of the first sample in the block
-    fs    : sample rate in Hz
-
-    The trailing `_`-prefixed args let the caller precompute the per-sample
-    time offsets, the (n_samples, 1+n_channels) scratch buffer, and the
-    savetxt format string once per acquisition session instead of once per
-    block, since none of them change block-to-block.
-    """
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    path = make_filename(ts)
-
-    n_ch, n_samp = data.shape
-    t0_epoch = ts.timestamp()  # UTC seconds since Unix epoch for first sample
-    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
-    t_axis = t0_epoch + t_offsets  # absolute UTC epoch time (s)
-
-    header_lines = [
-        "# NI cDAQ-9177 / NI 9234 Vibration Data",
-        f"# Block start (UTC): {ts.isoformat()}",
-        f"# Block start (epoch s): {t0_epoch:.6f}",
-        f"# Sample rate (Hz):  {fs}",
-        f"# Samples:           {n_samp}",
-        f"# Channels:          {n_ch}",
-        f"# Sensitivity (mV/g):{SENSITIVITY}",
-        "# Units:             g (acceleration)",
-    ]
-    labels = CHANNEL_LABELS[:n_ch]
-    for key, value in channel_metadata_items(labels):
-        header_lines.append(f"# {key}: {value}")
-    header_lines += [
-        "# " + "-" * 60,
-        "time_epoch_s," + ",".join(labels),
-    ]
-    header = "\n".join(header_lines)
-
-    # Stack time axis + data rows  →  (n_samples, 1 + n_channels)
-    if _out_buf is not None:
-        _out_buf[:, 0] = t_axis
-        _out_buf[:, 1:] = data.T
-        block_out = _out_buf
-    else:
-        block_out = np.column_stack([t_axis, data.T])
-
-    fmt = _fmt if _fmt is not None else "%.6f," + ",".join(["%.8g"] * n_ch)
-    with open(path, "w", buffering=1 << 16) as f:
-        f.write(header + "\n")
-        np.savetxt(f, block_out, delimiter=",", fmt=fmt)
-    log.info("Saved %s  (%d samples × %d channels)", path, n_samp, n_ch)
-    return path
+    if not path:
+        return {}, {}
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("system") or {}, data.get("channels") or {}
 
 
-def write_block_hdf5(
-    data: np.ndarray,
-    ts: datetime.datetime,
-    fs: float,
-    _t_offsets: np.ndarray | None = None,
-):
-    import h5py
-
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    path = os.path.join(OUTPUT_DIR, f"{FILE_PREFIX}_{stamp}.h5")
-
-    n_ch, n_samp = data.shape
-    t0_epoch = ts.timestamp()
-    t_offsets = _t_offsets if _t_offsets is not None else np.arange(n_samp) / fs
-    t_axis = t0_epoch + t_offsets
-
-    with h5py.File(path, "w") as f:
-        f.attrs["block_start_utc"] = ts.isoformat()
-        f.attrs["block_start_epoch_s"] = t0_epoch
-        f.attrs["sample_rate_hz"] = fs
-        f.attrs["n_samples"] = n_samp
-        f.attrs["n_channels"] = n_ch
-        f.attrs["sensitivity_mv_per_g"] = SENSITIVITY
-        f.attrs["units"] = "g"
-        labels = CHANNEL_LABELS[:n_ch]
-        f.attrs["channel_labels"] = labels
-        for key, value in channel_metadata_items(labels):
-            f.attrs[key] = value
-
-        f.create_dataset("time_epoch_s", data=t_axis)
-        f.create_dataset("data", data=data.T)
-
-    log.info("Saved %s  (%d samples × %d channels)", path, n_samp, n_ch)
-    return path
+# ── Channel spec / metadata assembly ───────────────────────────────────────────
 
 
-# ── Core acquisition function ─────────────────────────────────────────────────
+def _module_devices():
+    return {
+        "mod1": DEFAULT_MODULE_1,
+        "mod2": DEFAULT_MODULE_2,
+        "mod3": DEFAULT_MODULE_3,
+    }
 
 
-def run_acquisition(duration_s: float | None = None):
-    """
-    Acquire vibration data continuously (or for `duration_s` seconds).
-    Writes one CSV file per BLOCK_DURATION interval.
-    """
-    log.info("Initialising NI-DAQmx task…")
-
-    with nidaqmx.Task() as task:
-        # ── Add IEPE accelerometer channels ──────────────────────────────────
-        CHANNELS_PER_MODULE = 4  # NI 9234 has 4 channels
-        for slot, dev in enumerate([MODULE_1_DEVICE, MODULE_2_DEVICE]):
-            for ch in range(CHANNELS_PER_MODULE):
-                task.ai_channels.add_ai_accel_chan(
-                    physical_channel=f"{dev}/ai{ch}",
-                    name_to_assign_to_channel=CHANNEL_LABELS[
-                        slot * CHANNELS_PER_MODULE + ch
-                    ],
-                    terminal_config=TerminalConfiguration.DEFAULT,
-                    min_val=-MAX_VOLTAGE / (SENSITIVITY / 1000),  # convert mV/g → V/g
-                    max_val=MAX_VOLTAGE / (SENSITIVITY / 1000),
-                    units=nidaqmx.constants.AccelUnits.G,
-                    sensitivity=SENSITIVITY,
-                    sensitivity_units=nidaqmx.constants.AccelSensitivityUnits.MILLIVOLTS_PER_G,
-                    current_excit_source=ExcitationSource.INTERNAL,
-                    current_excit_val=IEPE_EXCITATION,
-                )
-
-        # ── Configure sample clock ────────────────────────────────────────────
-        task.timing.cfg_samp_clk_timing(
-            rate=SAMPLE_RATE,
-            sample_mode=AcquisitionType.CONTINUOUS,
-            samps_per_chan=SAMPLES_PER_BLOCK * 4,  # on-board buffer = 4 blocks
+def build_channel_specs(channel_overrides):
+    """Per-channel dicts in the shape acquisition.run_acquisition() expects,
+    from acquisition.CHANNEL_DEFS plus any --metadata-file overrides."""
+    devices = _module_devices()
+    specs = []
+    for chdef in acquisition.CHANNEL_DEFS:
+        override = channel_overrides.get(chdef["label"], {})
+        specs.append(
+            {
+                "phys": f"{devices[chdef['module']]}/ai{chdef['ai']}",
+                "label": chdef["label"],
+                "kind": chdef["kind"],
+                "scale": float(override.get("scale", 1.0)),
+                "offset": float(override.get("offset", 0.0)),
+                "units": str(override.get("units", chdef["units"])),
+            }
         )
+    return specs
 
-        # NI-DAQmx silently adjusts the rate to the nearest value achievable
-        # by the hardware's internal clock dividers.  Read it back so the CSV
-        # header records the rate the hardware actually used, not the nominal
-        # requested rate — a mismatch here causes a proportional frequency
-        # error in all downstream spectral analysis.
-        actual_fs = task.timing.samp_clk_rate
-        if abs(actual_fs - SAMPLE_RATE) > 0.5:
-            log.warning(
-                "Requested sample rate %.2f Hz; hardware achieved %.6f Hz "
-                "(%.4f %% offset) — CSV will record actual rate",
-                SAMPLE_RATE,
-                actual_fs,
-                100.0 * (actual_fs - SAMPLE_RATE) / SAMPLE_RATE,
-            )
-        else:
-            log.info("Sample rate: %.6f Hz (requested %.2f Hz)", actual_fs, SAMPLE_RATE)
 
-        reader = AnalogMultiChannelReader(task.in_stream)
-        buf = np.zeros((len(CHANNEL_LABELS), SAMPLES_PER_BLOCK), dtype=np.float64)
-
-        # Precompute the per-block time offsets, scratch output buffer, and
-        # savetxt format string once — none of them change block-to-block —
-        # instead of reallocating them on every write.
-        n_ch = len(CHANNEL_LABELS)
-        t_offsets = np.arange(SAMPLES_PER_BLOCK) / actual_fs
-        out_buf = np.empty((SAMPLES_PER_BLOCK, n_ch + 1), dtype=np.float64)
-        fmt = "%.6f," + ",".join(["%.8g"] * n_ch)
-
-        # File writes happen on a background thread so a slow disk can never
-        # stall the read loop below and cause the on-board DAQ buffer to
-        # overrun.
-        write_queue: queue.Queue = queue.Queue()
-
-        def _writer():
-            while True:
-                item = write_queue.get()
-                if item is None:
-                    break
-                blk_data, blk_ts = item
-                try:
-                    if OUTPUT_FORMAT == "hdf5":
-                        write_block_hdf5(
-                            blk_data, blk_ts, actual_fs, _t_offsets=t_offsets
-                        )
-                    else:
-                        write_block(
-                            blk_data,
-                            blk_ts,
-                            actual_fs,
-                            _t_offsets=t_offsets,
-                            _out_buf=out_buf,
-                            _fmt=fmt,
-                        )
-                except Exception:
-                    log.exception("Failed to write block")
-
-        writer = threading.Thread(target=_writer, daemon=True)
-        writer.start()
-
-        # Capture the acquisition start time immediately before task.start() so
-        # that block timestamps are derived from sample count rather than wall
-        # clock calls inside the loop.  This eliminates the per-block jitter
-        # (write latency, loop overhead) that otherwise shifts each file's
-        # timestamp by ~10–15 ms, causing apparent overlaps between files.
-        acq_start_utc = datetime.datetime.utcnow()
-        task.start()
-        log.info(
-            "Acquisition started — %.4f Hz, %d-sample blocks (~%.1f s each)",
-            actual_fs,
-            SAMPLES_PER_BLOCK,
-            BLOCK_DURATION,
+def build_channel_metadata(channel_overrides):
+    """Per-channel header metadata dicts, in the shape
+    acquisition._write_block[_hdf5] expect, from acquisition.CHANNEL_DEFS
+    plus any --metadata-file overrides."""
+    rows = []
+    for chdef in acquisition.CHANNEL_DEFS:
+        override = channel_overrides.get(chdef["label"], {})
+        rows.append(
+            {
+                "label": chdef["label"],
+                "sensor_type": str(override.get("sensor_type", chdef["sensor_type"])),
+                "units": str(override.get("units", chdef["units"])),
+                "bandwidth_hz": str(override.get("bandwidth_hz", "")),
+                "axis": str(override.get("axis", chdef["axis"])),
+                "location": str(override.get("location", "")),
+                "sensor_serial": str(override.get("sensor_serial", "")),
+            }
         )
-
-        t_start = time.monotonic()
-        n_blocks = 0
-
-        while _running:
-            if duration_s and (time.monotonic() - t_start) >= duration_s:
-                log.info("Requested duration reached.")
-                break
-
-            block_ts = acq_start_utc + datetime.timedelta(
-                seconds=n_blocks * SAMPLES_PER_BLOCK / actual_fs
-            )
-
-            try:
-                reader.read_many_sample(
-                    buf,
-                    number_of_samples_per_channel=SAMPLES_PER_BLOCK,
-                    timeout=BLOCK_DURATION * 2 + 5.0,
-                )
-            except nidaqmx.errors.DaqError as exc:
-                log.error("DAQ read error: %s", exc)
-                break
-
-            write_queue.put((buf.copy(), block_ts))
-            n_blocks += 1
-
-        task.stop()
-
-        write_queue.put(None)
-        writer.join()
-        log.info("Acquisition stopped after %d block(s).", n_blocks)
+    return rows
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 
 def main():
-    global OUTPUT_DIR, OUTPUT_FORMAT, SAMPLE_RATE, SAMPLES_PER_BLOCK
-
     parser = argparse.ArgumentParser(
-        description="NI cDAQ vibration data acquisition — writes timestamped CSV files."
+        description="NI cDAQ vibration + position data acquisition — writes "
+        "timestamped CSV or HDF5 files."
     )
     parser.add_argument(
-        "-d",
-        "--duration",
-        type=float,
-        default=None,
-        metavar="SECONDS",
+        "-d", "--duration", type=float, default=None, metavar="SECONDS",
         help="Stop after this many seconds (default: run until Ctrl-C).",
     )
     parser.add_argument(
-        "-o",
-        "--output",
-        default=OUTPUT_DIR,
-        metavar="DIR",
+        "-o", "--output", default=OUTPUT_DIR, metavar="DIR",
         help=f"Output directory (default: {OUTPUT_DIR}).",
     )
     parser.add_argument(
-        "-r",
-        "--rate",
-        type=float,
-        default=SAMPLE_RATE,
-        metavar="HZ",
-        help=f"Sample rate in Hz (default: {SAMPLE_RATE}).",
+        "-r", "--rate", type=float, default=SAMPLE_RATE, metavar="HZ",
+        help=f"Requested sample rate in Hz (default: {SAMPLE_RATE}).",
     )
     parser.add_argument(
-        "-f",
-        "--format",
-        choices=["csv", "hdf5"],
-        default="csv",
+        "-f", "--format", choices=["csv", "hdf5"], default="csv",
         help="Output file format (default: csv).",
+    )
+    parser.add_argument(
+        "-m", "--metadata-file", default=None, metavar="PATH",
+        help="Optional JSON file with system metadata and per-channel "
+        "overrides (scale, offset, units, axis, location, sensor serial, "
+        "bandwidth). See the module docstring for the schema.",
     )
     args = parser.parse_args()
 
-    OUTPUT_DIR = args.output
-    OUTPUT_FORMAT = args.format
-    SAMPLE_RATE = args.rate
-    SAMPLES_PER_BLOCK = int(SAMPLE_RATE * BLOCK_DURATION)
+    try:
+        system_metadata, channel_overrides = load_metadata_file(args.metadata_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        parser.error(f"--metadata-file: {exc}")
+        return
 
-    log.info("Output directory : %s", OUTPUT_DIR)
-    log.info("Output format    : %s", OUTPUT_FORMAT)
-    log.info("Sample rate      : %.0f Hz", SAMPLE_RATE)
+    channel_specs = build_channel_specs(channel_overrides)
+    channel_metadata = build_channel_metadata(channel_overrides)
+
+    config = {
+        "sample_rate": args.rate,
+        "block_duration": BLOCK_DURATION,
+        "sensitivity": SENSITIVITY,
+        "iepe_excitation": IEPE_EXCITATION,
+        "output_dir": args.output,
+        "file_prefix": FILE_PREFIX,
+        "channel_specs": channel_specs,
+        "system_metadata": system_metadata,
+        "channel_metadata": channel_metadata,
+        "output_format": args.format,
+        "continuous": True,
+        "file_count": 1,
+    }
+
+    log.info("Output directory : %s", config["output_dir"])
+    log.info("Output format    : %s", config["output_format"])
+    log.info("Requested rate   : %.0f Hz", config["sample_rate"])
     log.info(
-        "Block duration   : %.1f s  (%d samples)", BLOCK_DURATION, SAMPLES_PER_BLOCK
+        "Channels         : %s",
+        ", ".join(spec["label"] for spec in channel_specs),
     )
 
-    run_acquisition(duration_s=args.duration)
+    t_start = time.monotonic()
+    duration_s = args.duration
+
+    def _should_stop():
+        if not _running:
+            return True
+        return duration_s is not None and (time.monotonic() - t_start) >= duration_s
+
+    def _on_rate_confirmed(actual_fs):
+        requested = config["sample_rate"]
+        if abs(actual_fs - requested) > 0.5:
+            log.warning(
+                "Requested sample rate %.2f Hz; hardware achieved %.6f Hz "
+                "(%.4f %% offset) — files will record the actual rate",
+                requested,
+                actual_fs,
+                100.0 * (actual_fs - requested) / requested,
+            )
+        else:
+            log.info("Sample rate: %.6f Hz (requested %.2f Hz)", actual_fs, requested)
+
+    def _on_block_done(n, path, elapsed_s, peaks):
+        log.info("Saved %s  (block %d, %.1fs elapsed)", path, n, elapsed_s)
+
+    def _on_error(msg):
+        log.error("%s", msg)
+
+    acquisition.run_acquisition(
+        config,
+        on_rate_confirmed=_on_rate_confirmed,
+        on_block_done=_on_block_done,
+        on_error=_on_error,
+        should_stop=_should_stop,
+    )
+    log.info("Acquisition stopped.")
 
 
 if __name__ == "__main__":

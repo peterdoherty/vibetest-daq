@@ -1,98 +1,169 @@
 #  Copyright (C) 2026
 #  Smithsonian Astrophysical Observatory, Cambridge, MA, USA
 #  For conditions of distribution and use, see copyright notice in "copyright"
-import datetime as dt
+import json
 import sys
 
-import numpy as np
+import pytest
+
+from vibetest_daq import acquisition, daq
 
 
-def test_make_filename_uses_configured_output_dir_and_prefix(daq_module, tmp_path):
-    daq_module.OUTPUT_DIR = str(tmp_path)
-    daq_module.FILE_PREFIX = "run"
-
-    path = daq_module.make_filename(dt.datetime(2026, 5, 20, 18, 30, 1, 123456))
-
-    assert path == str(tmp_path / "run_20260520_183001_123.csv")
+def test_load_metadata_file_returns_empty_dicts_when_path_is_none():
+    assert daq.load_metadata_file(None) == ({}, {})
+    assert daq.load_metadata_file("") == ({}, {})
 
 
-def test_write_block_creates_csv_with_metadata_and_samples(daq_module, tmp_path):
-    daq_module.OUTPUT_DIR = str(tmp_path)
-    daq_module.FILE_PREFIX = "sample"
-    daq_module.CHANNEL_LABELS = ["x", "y"]
-    daq_module.SENSITIVITY = 100.0
-    data = np.array([[1.0, 2.0, 3.0], [-1.5, -2.5, -3.5]])
-    start = dt.datetime(2026, 5, 20, 18, 30, 0)
-
-    path = daq_module.write_block(data, start, fs=10.0)
-
-    contents = (tmp_path / "sample_20260520_183000_000.csv").read_text(
-        encoding="utf-8"
+def test_load_metadata_file_reads_system_and_channel_overrides(tmp_path):
+    path = tmp_path / "meta.json"
+    path.write_text(
+        json.dumps(
+            {
+                "system": {"test_id": "T-1", "operator": "PD"},
+                "channels": {
+                    "Pos_Ch0": {
+                        "scale": 12.5, "offset": 0.25, "location": "stage +X edge",
+                    }
+                },
+            }
+        )
     )
-    assert path == str(tmp_path / "sample_20260520_183000_000.csv")
-    assert "# Block start (UTC): 2026-05-20T18:30:00" in contents
-    assert "# Sample rate (Hz):  10.0" in contents
-    assert "# Channel x Units: g" in contents
-    assert "# Channel x Sensor Type: accelerometer" in contents
-    assert "# Channel y Units: g" in contents
-    assert "# Channel y Sensor Type: accelerometer" in contents
-    assert "Bandwidth" not in contents
-    assert "time_epoch_s,x,y" in contents
-    assert "1779316200.000000,1,-1.5" in contents
-    assert "1779316200.100000,2,-2.5" in contents
-    assert "1779316200.200000,3,-3.5" in contents
+
+    system, channels = daq.load_metadata_file(str(path))
+
+    assert system == {"test_id": "T-1", "operator": "PD"}
+    assert channels == {
+        "Pos_Ch0": {"scale": 12.5, "offset": 0.25, "location": "stage +X edge"}
+    }
 
 
-def test_write_block_includes_bandwidth_when_configured(daq_module, tmp_path):
-    daq_module.OUTPUT_DIR = str(tmp_path)
-    daq_module.FILE_PREFIX = "bw"
-    daq_module.CHANNEL_LABELS = ["x"]
-    daq_module.CHANNEL_BANDWIDTH_HZ = 3000.0
-    data = np.array([[1.0, 2.0]])
-
-    daq_module.write_block(data, dt.datetime(2026, 5, 20, 18, 30, 0), fs=10.0)
-
-    contents = (tmp_path / "bw_20260520_183000_000.csv").read_text(encoding="utf-8")
-    assert "# Channel x Bandwidth (Hz): 3000" in contents
+def test_load_metadata_file_raises_for_missing_file(tmp_path):
+    with pytest.raises(OSError):
+        daq.load_metadata_file(str(tmp_path / "missing.json"))
 
 
-def test_main_applies_cli_arguments_before_running_acquisition(
-    daq_module, monkeypatch, tmp_path
+def test_load_metadata_file_raises_for_invalid_json(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text("{not valid json")
+
+    with pytest.raises(json.JSONDecodeError):
+        daq.load_metadata_file(str(path))
+
+
+def test_build_channel_specs_uses_channel_defs_with_default_scale_and_offset():
+    specs = daq.build_channel_specs({})
+
+    assert [s["label"] for s in specs] == acquisition.CHANNEL_LABELS
+    accel = next(s for s in specs if s["label"] == "Mod1_Ch0")
+    assert accel == {
+        "phys": "cDAQ2Mod1/ai0", "label": "Mod1_Ch0", "kind": "accel",
+        "scale": 1.0, "offset": 0.0, "units": "g",
+    }
+    position = next(s for s in specs if s["label"] == "Pos_Ch0")
+    assert position == {
+        "phys": "cDAQ2Mod2/ai0", "label": "Pos_Ch0", "kind": "voltage",
+        "scale": 1.0, "offset": 0.0, "units": "um",
+    }
+
+
+def test_build_channel_specs_applies_overrides():
+    specs = daq.build_channel_specs(
+        {"Pos_Ch0": {"scale": 12.5, "offset": 0.25, "units": "um"}}
+    )
+
+    position = next(s for s in specs if s["label"] == "Pos_Ch0")
+    assert position["scale"] == 12.5
+    assert position["offset"] == 0.25
+
+
+def test_build_channel_metadata_uses_channel_defs_and_overrides():
+    rows = daq.build_channel_metadata(
+        {"Pos_Ch0": {"location": "stage +X edge", "sensor_serial": "SN1"}}
+    )
+
+    accel = next(r for r in rows if r["label"] == "Mod1_Ch0")
+    assert accel["sensor_type"] == "accelerometer"
+    assert accel["units"] == "g"
+    assert accel["axis"] == "X"
+
+    position = next(r for r in rows if r["label"] == "Pos_Ch0")
+    assert position["sensor_type"] == "position"
+    assert position["units"] == "um"
+    assert position["location"] == "stage +X edge"
+    assert position["sensor_serial"] == "SN1"
+
+
+def test_main_builds_config_from_cli_arguments_and_calls_run_acquisition(
+    monkeypatch, tmp_path
 ):
     calls = []
 
-    def fake_run_acquisition(duration_s=None):
-        calls.append(
-            {
-                "duration_s": duration_s,
-                "output_dir": daq_module.OUTPUT_DIR,
-                "sample_rate": daq_module.SAMPLE_RATE,
-                "samples_per_block": daq_module.SAMPLES_PER_BLOCK,
-            }
-        )
+    def fake_run_acquisition(config, **callbacks):
+        calls.append(config)
 
-    monkeypatch.setattr(daq_module, "run_acquisition", fake_run_acquisition)
+    monkeypatch.setattr(acquisition, "run_acquisition", fake_run_acquisition)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "vibetest-daq",
-            "--duration",
-            "12.5",
-            "--output",
-            str(tmp_path),
-            "--rate",
-            "2000",
+            "--duration", "12.5",
+            "--output", str(tmp_path),
+            "--rate", "2000",
         ],
     )
 
-    daq_module.main()
+    daq.main()
 
-    assert calls == [
-        {
-            "duration_s": 12.5,
-            "output_dir": str(tmp_path),
-            "sample_rate": 2000.0,
-            "samples_per_block": 2000,
-        }
-    ]
+    assert len(calls) == 1
+    config = calls[0]
+    assert config["output_dir"] == str(tmp_path)
+    assert config["sample_rate"] == 2000.0
+    assert config["output_format"] == "csv"
+    assert config["system_metadata"] == {}
+    assert [s["label"] for s in config["channel_specs"]] == acquisition.CHANNEL_LABELS
+
+
+def test_main_loads_metadata_file_into_config(monkeypatch, tmp_path):
+    meta_path = tmp_path / "meta.json"
+    meta_path.write_text(
+        json.dumps(
+            {
+                "system": {"test_id": "T-9"},
+                "channels": {"Pos_Ch0": {"scale": 7.0}},
+            }
+        )
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        acquisition, "run_acquisition", lambda config, **cb: calls.append(config)
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["vibetest-daq", "--output", str(tmp_path), "--metadata-file", str(meta_path)],
+    )
+
+    daq.main()
+
+    config = calls[0]
+    assert config["system_metadata"] == {"test_id": "T-9"}
+    pos = next(s for s in config["channel_specs"] if s["label"] == "Pos_Ch0")
+    assert pos["scale"] == 7.0
+
+
+def test_main_exits_with_clear_error_for_bad_metadata_file(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["vibetest-daq", "--metadata-file", str(tmp_path / "missing.json")],
+    )
+
+    with pytest.raises(SystemExit):
+        daq.main()
+
+    captured = capsys.readouterr()
+    assert "--metadata-file" in captured.err
