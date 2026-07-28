@@ -81,7 +81,7 @@ logs/
 scratch/
 notes/
 data/
-
+vibration_data/
 # Zip / archive files and dirs (history lives in git)
 *.zip
 *.tar
