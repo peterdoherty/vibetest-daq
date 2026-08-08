@@ -18,7 +18,7 @@ try:
 except ImportError:  # pragma: no cover - optional in the test environment
     h5py = None
 
-START = dt.datetime(2026, 7, 5, 12, 0, 0)
+START = dt.datetime(2026, 7, 5, 12, 0, 0, 123456, tzinfo=dt.UTC)
 
 CHANNEL_METADATA = [
     {
@@ -92,6 +92,21 @@ def test_write_block_emits_analyzer_channel_metadata_keys(tmp_path):
     assert "# Test Notes: first line | second line" in contents
 
 
+def test_write_block_records_utc_epoch_with_fractional_seconds(tmp_path):
+    data = np.array([[1.0, 2.0]])
+    naive_utc = dt.datetime(2026, 7, 5, 12, 0, 0, 123456)
+
+    path = acquisition._write_block(
+        data, naive_utc, 10.0, str(tmp_path), "vib", ["ChA"], 100.0,
+    )
+
+    contents = open(path, encoding="utf-8").read().splitlines()
+    assert "# Block start (UTC): 2026-07-05T12:00:00.123456+00:00" in contents
+    assert "# Block start (epoch s): 1783252800.123456" in contents
+    header_index = contents.index("time_epoch_s,ChA")
+    assert contents[header_index + 1].startswith("1783252800.123456,")
+
+
 @pytest.mark.skipif(h5py is None, reason="h5py not installed")
 def test_write_block_hdf5_uses_analyzer_file_attribute_keys(tmp_path):
     data = np.array([[1.0, 2.0], [3.0, 4.0]])
@@ -116,6 +131,60 @@ def test_write_block_hdf5_uses_analyzer_file_attribute_keys(tmp_path):
         assert attrs["Test Notes"] == "first line\nsecond line"
         assert list(attrs["channel_labels"]) == ["ChA", "Pos1"]
         assert f["data"].shape == (2, 2)
+
+
+@pytest.mark.skipif(h5py is None, reason="h5py not installed")
+def test_write_block_hdf5_records_utc_epoch_with_fractional_seconds(tmp_path):
+    data = np.array([[1.0, 2.0]])
+    naive_utc = dt.datetime(2026, 7, 5, 12, 0, 0, 123456)
+
+    path = acquisition._write_block_hdf5(
+        data, naive_utc, 10.0, str(tmp_path), "vib", ["ChA"], 100.0,
+    )
+
+    with h5py.File(path, "r") as f:
+        assert f.attrs["block_start_utc"] == "2026-07-05T12:00:00.123456+00:00"
+        assert f.attrs["block_start_epoch_s"] == pytest.approx(1783252800.123456)
+        assert f["time_epoch_s"][0] == pytest.approx(1783252800.123456)
+
+
+def test_normalize_position_channel_units_replaces_stale_g_units():
+    specs = [
+        {
+            "label": "Mod1_Ch0", "kind": "accel", "phys": "cDAQ1Mod1/ai0",
+            "scale": 1.0, "offset": 0.0, "units": "g",
+        },
+        {
+            "label": "Pos_Ch0", "kind": "voltage", "phys": "cDAQ1Mod3/ai0",
+            "scale": 1.0, "offset": 0.0, "units": "g",
+        },
+    ]
+    metadata = [
+        {"label": "Mod1_Ch0", "sensor_type": "accelerometer", "units": "g"},
+        {"label": "Pos_Ch0", "sensor_type": "position", "units": "g"},
+    ]
+
+    specs, metadata = acquisition._normalize_position_channel_units(specs, metadata)
+
+    assert specs[0]["units"] == "g"
+    assert metadata[0]["units"] == "g"
+    assert specs[1]["units"] == "um"
+    assert metadata[1]["units"] == "um"
+
+
+def test_normalize_position_channel_units_preserves_displacement_units():
+    specs = [
+        {
+            "label": "Pos_Ch0", "kind": "voltage", "phys": "cDAQ1Mod3/ai0",
+            "scale": 1.0, "offset": 0.0, "units": "mm",
+        },
+    ]
+    metadata = [{"label": "Pos_Ch0", "sensor_type": "position", "units": "mm"}]
+
+    specs, metadata = acquisition._normalize_position_channel_units(specs, metadata)
+
+    assert specs[0]["units"] == "mm"
+    assert metadata[0]["units"] == "mm"
 
 
 # ── run_acquisition() against a fake NI-DAQmx backend ──────────────────────

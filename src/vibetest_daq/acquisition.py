@@ -82,7 +82,63 @@ CHANNEL_METADATA_KEYS = {
 }
 
 
+def _default_channel_units(label):
+    for chdef in CHANNEL_DEFS:
+        if chdef["label"] == label:
+            return chdef["units"]
+    return ""
+
+
+def _position_units_or_default(label, units):
+    unit_text = str(units or "").strip()
+    if unit_text.lower() == "g":
+        return _default_channel_units(label) or "um"
+    return unit_text
+
+
+def _normalize_position_channel_units(channel_specs, channel_metadata):
+    """Protect position-channel metadata from stale accelerometer units."""
+    position_labels = {
+        spec["label"] for spec in channel_specs if spec.get("kind") == "voltage"
+    }
+
+    normalized_specs = []
+    for spec in channel_specs:
+        spec = dict(spec)
+        if spec.get("label") in position_labels:
+            spec["units"] = _position_units_or_default(
+                spec.get("label", ""), spec.get("units")
+            )
+        normalized_specs.append(spec)
+
+    normalized_metadata = []
+    for meta in channel_metadata:
+        meta = dict(meta)
+        if (
+            meta.get("label") in position_labels
+            or str(meta.get("sensor_type", "")).strip().lower() == "position"
+        ):
+            meta["units"] = _position_units_or_default(
+                meta.get("label", ""), meta.get("units")
+            )
+        normalized_metadata.append(meta)
+
+    return normalized_specs, normalized_metadata
+
+
 # ── File writers ──────────────────────────────────────────────────────────────
+
+def _as_utc(ts):
+    """Return a timezone-aware UTC datetime.
+
+    Naive datetimes accepted here are treated as UTC for compatibility with
+    older callers and tests. Calling timestamp() on a naive datetime would
+    interpret it as local time, which corrupts UTC epoch columns.
+    """
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=datetime.UTC)
+    return ts.astimezone(datetime.UTC)
+
 
 def _write_block(
     data,
@@ -100,6 +156,7 @@ def _write_block(
 ):
     system_metadata = system_metadata or {}
     channel_metadata = channel_metadata or []
+    ts = _as_utc(ts)
     os.makedirs(output_dir, exist_ok=True)
     stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
     path  = os.path.join(output_dir, f"{file_prefix}_{stamp}.csv")
@@ -184,6 +241,7 @@ def _write_block_hdf5(
 
     system_metadata = system_metadata or {}
     channel_metadata = channel_metadata or []
+    ts = _as_utc(ts)
     os.makedirs(output_dir, exist_ok=True)
     stamp = ts.strftime("%Y%m%d_%H%M%S_%f")[:-3]
     path  = os.path.join(output_dir, f"{file_prefix}_{stamp}.h5")
@@ -278,9 +336,12 @@ def run_acquisition(
     output_dir    = config["output_dir"]
     file_prefix   = config["file_prefix"]
     channel_specs = config["channel_specs"]
-    ch_labels     = [s["label"] for s in channel_specs]
     system_meta   = config["system_metadata"]
     channel_meta  = config["channel_metadata"]
+    channel_specs, channel_meta = _normalize_position_channel_units(
+        channel_specs, channel_meta
+    )
+    ch_labels     = [s["label"] for s in channel_specs]
     n_ch          = len(ch_labels)
     should_stop   = should_stop or (lambda: False)
 
@@ -380,7 +441,7 @@ def run_acquisition(
                 elif on_block_done:
                     on_block_done(blk_n, path, time.monotonic() - t0, peaks)
 
-        acq_start = datetime.datetime.utcnow()
+        acq_start = datetime.datetime.now(datetime.UTC)
         task.start()
         t0 = time.monotonic()
         n  = 0

@@ -112,6 +112,13 @@ def _module_devices():
     }
 
 
+def _units_or_channel_default(chdef, override):
+    units = str(override.get("units", chdef["units"]))
+    if chdef["kind"] == "voltage" and units.strip().lower() == "g":
+        return chdef["units"]
+    return units
+
+
 def build_channel_specs(channel_overrides):
     """Per-channel dicts in the shape acquisition.run_acquisition() expects,
     from acquisition.CHANNEL_DEFS plus any --metadata-file overrides."""
@@ -126,7 +133,7 @@ def build_channel_specs(channel_overrides):
                 "kind": chdef["kind"],
                 "scale": float(override.get("scale", 1.0)),
                 "offset": float(override.get("offset", 0.0)),
-                "units": str(override.get("units", chdef["units"])),
+                "units": _units_or_channel_default(chdef, override),
             }
         )
     return specs
@@ -143,7 +150,7 @@ def build_channel_metadata(channel_overrides):
             {
                 "label": chdef["label"],
                 "sensor_type": str(override.get("sensor_type", chdef["sensor_type"])),
-                "units": str(override.get("units", chdef["units"])),
+                "units": _units_or_channel_default(chdef, override),
                 "bandwidth_hz": str(override.get("bandwidth_hz", "")),
                 "axis": str(override.get("axis", chdef["axis"])),
                 "location": str(override.get("location", "")),

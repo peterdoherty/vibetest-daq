@@ -65,6 +65,13 @@ DEFAULT_MODULE_3        = "cDAQ2Mod3"
 # points can't silently diverge in channel layout or output format.
 
 
+def _saved_units_or_channel_default(chdef, saved_units):
+    units = str(saved_units or "").strip()
+    if chdef["kind"] == "voltage" and units.lower() == "g":
+        return chdef["units"]
+    return units or chdef["units"]
+
+
 # ── DAQ worker (runs in a QThread) ───────────────────────────────────────────
 
 class DaqWorker(QObject):
@@ -721,7 +728,10 @@ class DaqController(QMainWindow):
                 settings.value(f"{prefix}/sensor_type", default_sensor_type)
             )
             edits["units"].setText(
-                settings.value(f"{prefix}/units", CHANNEL_DEFS[idx]["units"])
+                _saved_units_or_channel_default(
+                    CHANNEL_DEFS[idx],
+                    settings.value(f"{prefix}/units", CHANNEL_DEFS[idx]["units"]),
+                )
             )
             edits["bandwidth_hz"].setText(
                 settings.value(f"{prefix}/bandwidth_hz", "")

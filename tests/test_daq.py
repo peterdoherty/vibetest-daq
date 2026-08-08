@@ -76,6 +76,13 @@ def test_build_channel_specs_applies_overrides():
     assert position["offset"] == 0.25
 
 
+def test_build_channel_specs_rejects_position_units_g_override():
+    specs = daq.build_channel_specs({"Pos_Ch0": {"units": "g"}})
+
+    position = next(s for s in specs if s["label"] == "Pos_Ch0")
+    assert position["units"] == "um"
+
+
 def test_build_channel_metadata_uses_channel_defs_and_overrides():
     rows = daq.build_channel_metadata(
         {"Pos_Ch0": {"location": "stage +X edge", "sensor_serial": "SN1"}}
@@ -91,6 +98,14 @@ def test_build_channel_metadata_uses_channel_defs_and_overrides():
     assert position["units"] == "um"
     assert position["location"] == "stage +X edge"
     assert position["sensor_serial"] == "SN1"
+
+
+def test_build_channel_metadata_rejects_position_units_g_override():
+    rows = daq.build_channel_metadata({"Pos_Ch0": {"units": "g"}})
+
+    position = next(r for r in rows if r["label"] == "Pos_Ch0")
+    assert position["sensor_type"] == "position"
+    assert position["units"] == "um"
 
 
 def test_main_builds_config_from_cli_arguments_and_calls_run_acquisition(
