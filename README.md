@@ -30,8 +30,12 @@ hardware to be installed and visible to `nidaqmx`.
 Run the command-line acquisition:
 
 ```powershell
-vibetest-daq --output vibration_data --rate 5000
+vibetest-daq --duration 60 --output vibration_data --rate 5000 --metadata-file metadata.json
 ```
+
+The metadata file is optional. It can provide system metadata and per-channel
+overrides for scale, offset, units, axis, location, sensor serial number, and
+bandwidth.
 
 Run the GUI:
 
@@ -46,4 +50,3 @@ Run lint checks:
 ```powershell
 ruff check .
 ```
-

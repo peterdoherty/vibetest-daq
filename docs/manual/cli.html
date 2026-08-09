@@ -29,11 +29,10 @@
 <h2>When to Use the CLI</h2>
 
 <p>The command-line interface (<code>vibetest-daq</code>) is a simpler alternative to
-the GUI. It records accelerometer data from all eight channels (two NI&nbsp;9234
-modules) using a fixed configuration and writes CSV files to disk until you stop it.
-It does not support the NI&nbsp;9215 position channels &mdash; use the
-<a href="gui-overview.html">GUI</a> for acquisitions that include position sensors.
-Use the CLI when:</p>
+the GUI. It uses the same shared acquisition engine and channel metadata writer as
+the GUI, records the configured accelerometer and NI&nbsp;9215 position channels,
+and writes timestamped CSV or HDF5 files until the requested duration is complete
+or you stop it. Use the CLI when:</p>
 
 <ul>
   <li>You want to run an acquisition from a script or batch file.</li>
@@ -42,9 +41,10 @@ Use the CLI when:</p>
 </ul>
 
 <div class="note">
-  <strong>Note:</strong> The CLI always records all eight accelerometer channels and
-  does not support metadata fields, per-channel labels, or the NI&nbsp;9215 position
-  channels. If you need those features, use the <a href="gui-overview.html">GUI</a>.
+  <strong>Note:</strong> The CLI accepts a JSON metadata file for system metadata,
+  per-channel labels, calibration scale/offset, units, axis, location, sensor
+  serial number, and bandwidth. The GUI remains the most convenient way to edit
+  those fields interactively.
 </div>
 
 <h2>Basic Usage</h2>
@@ -79,6 +79,12 @@ Use the CLI when:</p>
         analysis tools. See <a href="csv-format.html">Output Formats</a> for details
         on both formats.</td>
   </tr>
+  <tr>
+    <td><code>-m</code>, <code>--metadata-file PATH</code></td>
+    <td>None</td>
+    <td>Optional JSON file with system metadata and per-channel overrides such as
+        scale, offset, units, axis, location, sensor serial number, and bandwidth.</td>
+  </tr>
 </table>
 
 <h2>Examples</h2>
@@ -108,16 +114,50 @@ current block finishes writing.</p>
 <p>Output files will have a <code>.h5</code> extension instead of <code>.csv</code>.
 The data content is identical; only the container format differs.</p>
 
+<h3>Record with metadata</h3>
+
+<pre><code>vibetest-daq --duration 60 --output ./test_data --metadata-file metadata.json</code></pre>
+
+<p>The metadata file has two top-level objects: <code>system</code> for acquisition
+metadata and <code>channels</code> for per-channel overrides keyed by channel label.</p>
+
+<pre><code>{
+  "system": {
+    "test_id": "CRYOTEL-SWEEP-001",
+    "dut_make": "Sunpower",
+    "dut_model": "CryoTel GT",
+    "dut_serial": "0",
+    "test_stand": "Test Stand",
+    "operator": "J. Smith",
+    "location": "Lab",
+    "notes": "Baseline: chiller on, CryoTel off"
+  },
+  "channels": {
+    "Mod1_Ch0": {
+      "axis": "X",
+      "location": "stage top",
+      "sensor_serial": "0",
+      "bandwidth_hz": "3000"
+    },
+    "Pos_Ch0": {
+      "units": "um",
+      "scale": 1.0,
+      "offset": 0.0,
+      "location": "stage +X edge"
+    }
+  }
+}</code></pre>
+
 <h2>CLI vs. GUI Differences</h2>
 
 <table>
   <tr><th>Feature</th><th>CLI</th><th>GUI</th></tr>
   <tr><td>Output format</td><td>CSV or HDF5 (<code>--format</code>)</td><td>CSV or HDF5 (combo box)</td></tr>
-  <tr><td>Channel selection</td><td>All 8 accelerometer channels, always</td><td>Enable/disable per channel (accel + position)</td></tr>
-  <tr><td>Position sensors (NI 9215)</td><td>Not supported</td><td>Supported (Pos_Ch0, Pos_Ch1)</td></tr>
+  <tr><td>Channel selection</td><td>Shared configured channel set</td><td>Enable/disable per channel (accel + position)</td></tr>
+  <tr><td>Position sensors (NI 9215)</td><td>Supported (Pos_Ch0, Pos_Ch1)</td><td>Supported (Pos_Ch0, Pos_Ch1)</td></tr>
   <tr><td>Block duration</td><td>Fixed at 1&nbsp;s</td><td>Configurable (1&ndash;3,600&nbsp;s)</td></tr>
-  <tr><td>System metadata</td><td>Not supported</td><td>Full metadata fields</td></tr>
-  <tr><td>Channel metadata</td><td>Not supported</td><td>Axis, location, sensor serial</td></tr>
+  <tr><td>System metadata</td><td>Supported with <code>--metadata-file</code></td><td>Full metadata fields</td></tr>
+  <tr><td>Channel metadata</td><td>Supported with <code>--metadata-file</code></td><td>Axis, location, sensor serial</td></tr>
   <tr><td>Level meters</td><td>Not available</td><td>Live per-channel peak display</td></tr>
   <tr><td>File count mode</td><td>Use <code>--duration</code></td><td>Continuous or fixed count</td></tr>
   <tr><td>Settings persistence</td><td>None</td><td>Automatic save/restore</td></tr>
@@ -144,8 +184,8 @@ The data content is identical; only the container format differs.</p>
 2026-05-20 14:30:00  INFO      Initialising NI-DAQmx task...
 2026-05-20 14:30:00  INFO      Sample rate: 5000.000000 Hz (requested 5000.00 Hz)
 2026-05-20 14:30:00  INFO      Acquisition started -- 5000.0000 Hz, 5000-sample blocks
-2026-05-20 14:30:01  INFO      Saved ./test_data/vib_20260520_143000_000.csv  (5000 samples x 8 channels)
-2026-05-20 14:30:02  INFO      Saved ./test_data/vib_20260520_143001_000.csv  (5000 samples x 8 channels)</code></pre>
+2026-05-20 14:30:01  INFO      Saved ./test_data/vib_20260520_143000_000.csv  (block 1, 1.0s elapsed)
+2026-05-20 14:30:02  INFO      Saved ./test_data/vib_20260520_143001_000.csv  (block 2, 2.0s elapsed)</code></pre>
 </div>
 
 <h2>Hardware Configuration</h2>
@@ -156,12 +196,14 @@ settings. If you need to change them, edit the constants at the top of
 
 <table>
   <tr><th>Constant</th><th>Default</th><th>Purpose</th></tr>
-  <tr><td><code>MODULE_1_DEVICE</code></td><td><code>cDAQ1Mod1</code></td><td>NI-DAQmx name of the first NI 9234 module</td></tr>
-  <tr><td><code>MODULE_2_DEVICE</code></td><td><code>cDAQ1Mod2</code></td><td>NI-DAQmx name of the second NI 9234 module</td></tr>
+  <tr><td><code>DEFAULT_MODULE_1</code></td><td><code>cDAQ2Mod1</code></td><td>NI-DAQmx name of the NI 9234 accelerometer module</td></tr>
+  <tr><td><code>DEFAULT_MODULE_2</code></td><td><code>cDAQ2Mod2</code></td><td>NI-DAQmx name used by the configured position channels</td></tr>
+  <tr><td><code>DEFAULT_MODULE_3</code></td><td><code>cDAQ2Mod3</code></td><td>Reserved for alternate NI 9215 position-channel wiring</td></tr>
   <tr><td><code>SENSITIVITY</code></td><td><code>100.0</code> mV/g</td><td>Accelerometer sensitivity</td></tr>
   <tr><td><code>IEPE_EXCITATION</code></td><td><code>0.004</code> A</td><td>Constant-current excitation</td></tr>
   <tr><td><code>BLOCK_DURATION</code></td><td><code>1.0</code> s</td><td>Seconds per output file</td></tr>
-  <tr><td><code>MAX_VOLTAGE</code></td><td><code>5.0</code> V</td><td>NI 9234 input range</td></tr>
+  <tr><td><code>DEFAULT_MAX_VOLTAGE</code></td><td><code>5.0</code> V</td><td>NI 9234 input range</td></tr>
+  <tr><td><code>POSITION_MAX_VOLTAGE</code></td><td><code>10.0</code> V</td><td>NI 9215 input range</td></tr>
   <tr><td><code>FILE_PREFIX</code></td><td><code>vib</code></td><td>Output filename prefix</td></tr>
 </table>
 
