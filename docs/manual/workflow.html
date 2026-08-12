@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Operating Procedure — Vibetest DAQ Manual</title><link rel="stylesheet" href="manual.css"></head><body>
+<header><h1>Operating Procedure</h1><p>A repeatable sequence for obtaining traceable, usable data.</p></header>
+<nav><a href="index.html">Home</a><a href="getting-started.html">Getting Started</a><a href="workflow.html">Operating Procedure</a><a href="gui-overview.html">GUI</a><a href="metadata.html">Metadata</a><a href="channels.html">Channels</a><a href="cli.html">Command Line</a><a href="csv-format.html">Output Files</a><a href="troubleshooting.html">Troubleshooting</a></nav>
+<main>
+<h2>1. Plan the measurement</h2>
+<ol><li>Define the physical quantity, axes, locations, expected amplitudes, and highest frequency of interest.</li><li>Select sensors whose calibrated ranges and bandwidths cover those values with margin.</li><li>Select a sample rate greater than twice the highest frequency of interest and within the hardware/sensor limits. More margin makes anti-alias filtering easier.</li><li>Estimate storage: samples per file = actual rate × block duration; total rows = samples per file × number of files.</li><li>Choose a short block for responsive stopping and manageable files, or a longer block when analysis requires uninterrupted records. The GUI permits 1–3,600 s; the CLI uses 1 s.</li></ol>
+
+<h2>2. Prepare hardware safely</h2>
+<ol><li>Make the DUT safe and secure the test fixture.</li><li>Mount accelerometers rigidly in the documented orientation. Route and strain-relieve cables so they cannot pull on sensors or contact moving parts.</li><li>Connect each sensor to the input recorded in the <a href="channels.html">channel map</a>.</li><li>For every IEPE sensor, verify sensitivity and allowed excitation current from its calibration sheet/datasheet.</li><li>For every position channel, determine the controller's voltage endpoints and corresponding positions. Calculate scale and offset before acquisition.</li><li>Power and self-test the cDAQ system in NI MAX. Confirm the computer clock if correlation with other systems matters.</li></ol>
+
+<h2>3. Configure the program</h2>
+<ol><li>Choose a local output directory and descriptive file prefix. Avoid reusing a folder ambiguously across unrelated tests.</li><li>Enter the exact NI MAX module names.</li><li>Set rate, block duration, sensitivity, IEPE current, format, and continuous/file count mode.</li><li>Enter a unique Test ID and enough DUT/setup metadata to reconstruct the test later.</li><li>On Channels, disable unused inputs and verify units, axes, locations, serials, bandwidths, and position scale/offset.</li><li>Set display full scales near the expected peak values. These affect only meters, not acquired data or clipping limits.</li><li>Review the Metadata Summary immediately before Start.</li></ol>
+
+<h2>4. Preflight checklist</h2>
+<ul class="checklist"><li>DUT and fixture approved for operation; emergency-stop procedure known.</li><li>Sensors firmly mounted; cables secure; channel map independently checked.</li><li>Sensitivity, IEPE current, position scale/offset, and units confirmed from source records.</li><li>Requested rate supports the analysis bandwidth.</li><li>Output path is writable, local disk preferred, and free space is adequate.</li><li>Test ID and changed setup details are current, not carried over from the previous run.</li><li>Only intended channels are enabled.</li></ul>
+
+<h2>5. Acquire</h2>
+<ol><li>Press <strong>Start Acquisition</strong>. Do not begin the DUT sequence until state is Recording and the actual rate is shown.</li><li>Observe at least one completed block at a safe baseline. Check for dead, implausible, or unexpectedly large channels.</li><li>Run the test while monitoring the DUT independently. The GUI's red meter threshold is only a user-selected display threshold; it is not a hardware clipping detector or safety interlock.</li><li>For a manual run, press Stop at the planned end and wait for Idle. For fixed count, wait for automatic completion.</li><li>Do not disconnect hardware, close the application, or remove storage while a block is being read/written.</li></ol>
+
+<h2>6. Verify before dismantling</h2>
+<ol><li>Confirm the expected file count and nonzero file sizes.</li><li>Open at least the first and last file. Check Test ID, UTC time, actual sample rate, sample count, channel order, units, and sensor metadata.</li><li>Plot or inspect each channel. Look for flat lines, discontinuities, clipping, unreasonable offsets, swapped axes, and position values outside the known range.</li><li>Record anomalies in the test log. Do not silently edit acquired files; preserve originals and make corrected/derived data separately.</li><li>Copy data to the project storage/backup location according to local procedure, then verify the copy before deleting any local data.</li></ol>
+
+<h2>Position calibration example</h2>
+<p>If −10 V represents −5 mm and +10 V represents +5 mm:</p>
+<pre><code>scale = (5 - (-5)) / (10 - (-10)) = 0.5 mm/V
+offset = -5 - (0.5 × -10) = 0 mm</code></pre>
+<p>Enter Units = <code>mm</code>, Scale = <code>0.5</code>, Offset = <code>0</code>. For arbitrary endpoints (<em>V1</em>, <em>P1</em>) and (<em>V2</em>, <em>P2</em>):</p><pre><code>scale = (P2 - P1) / (V2 - V1)
+offset = P1 - scale × V1</code></pre>
+<div class="warning"><strong>Sign matters:</strong> A controller whose voltage decreases as position increases needs a negative scale. Validate with two or more known positions.</div>
+<div class="next">Next: <a href="gui-overview.html">GUI reference</a></div>
+</main></body></html>

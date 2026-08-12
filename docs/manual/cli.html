@@ -1,217 +1,69 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Command Line &mdash; Vibetest DAQ Manual</title>
-  <link rel="stylesheet" href="manual.css">
-</head>
-<body>
-
-<header>
-  <h1>Command Line Interface</h1>
-  <p>Run acquisitions from a terminal for scripted, automated, or unattended recording.</p>
-</header>
-
-<nav>
-  <a href="index.html">Home</a>
-  <a href="getting-started.html">Getting Started</a>
-  <a href="gui-overview.html">GUI Overview</a>
-  <a href="metadata.html">Metadata</a>
-  <a href="channels.html">Channels</a>
-  <a href="cli.html">Command Line</a>
-  <a href="csv-format.html">Output Formats</a>
-  <a href="troubleshooting.html">Troubleshooting</a>
-</nav>
-
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Command Line — Vibetest DAQ Manual</title><link rel="stylesheet" href="manual.css"></head><body>
+<header><h1>Command Line</h1><p>Run a fixed-configuration acquisition from PowerShell, a batch job, or an orchestration tool.</p></header>
+<nav><a href="index.html">Home</a><a href="getting-started.html">Getting Started</a><a href="workflow.html">Operating Procedure</a><a href="gui-overview.html">GUI</a><a href="metadata.html">Metadata</a><a href="channels.html">Channels</a><a href="cli.html">Command Line</a><a href="csv-format.html">Output Files</a><a href="troubleshooting.html">Troubleshooting</a></nav>
 <main>
+<h2>Behavior and limitations</h2><p><code>vibetest-daq</code> enables all five current channels, uses the device constants in <code>daq.py</code>, 1 s blocks, 100 mV/g sensitivity, 0.004 A IEPE current, and prefix <code>vib</code>. It cannot select channels or override those values with command-line flags. Use the GUI when those settings need interactive control.</p>
+<pre><code>vibetest-daq [OPTIONS]
+vibetest-daq --help</code></pre>
+<table><tr><th>Option</th><th>Default</th><th>Meaning</th></tr><tr><td><code>-d, --duration SECONDS</code></td><td>Until Ctrl+C</td><td>Requests stop once elapsed wall time reaches the value. Reads are block-based, so a positive duration is effectively rounded up to complete one-second blocks.</td></tr><tr><td><code>-o, --output DIR</code></td><td><code>vibration_data</code></td><td>Output directory, created on first write.</td></tr><tr><td><code>-r, --rate HZ</code></td><td>5,000</td><td>Requested sample rate. The CLI does not impose the GUI's numeric range; invalid hardware values fail during DAQ configuration.</td></tr><tr><td><code>-f, --format csv|hdf5</code></td><td>csv</td><td>Output container.</td></tr><tr><td><code>-m, --metadata-file PATH</code></td><td>none</td><td>UTF-8 JSON containing system metadata and channel overrides.</td></tr></table>
 
-<h2>When to Use the CLI</h2>
+<h2>Examples</h2><pre><code># About 60 one-second files at 5 kHz
+vibetest-daq --duration 60 --rate 5000 --output .\test_data
 
-<p>The command-line interface (<code>vibetest-daq</code>) is a simpler alternative to
-the GUI. It uses the same shared acquisition engine and channel metadata writer as
-the GUI, records the configured accelerometer and NI&nbsp;9215 position channels,
-and writes timestamped CSV or HDF5 files until the requested duration is complete
-or you stop it. Use the CLI when:</p>
+# Run until Ctrl+C and write HDF5
+vibetest-daq --format hdf5 --output D:\data\long_run
 
-<ul>
-  <li>You want to run an acquisition from a script or batch file.</li>
-  <li>You need unattended recording on a headless machine (no display).</li>
-  <li>You prefer the simplicity of a terminal over a graphical interface.</li>
-</ul>
+# Add metadata and position calibration
+vibetest-daq --duration 10 --metadata-file .\metadata.json</code></pre>
+<p>Ctrl+C sets a graceful-stop flag. The active block completes and pending files are written before exit; wait for <code>Acquisition stopped.</code>.</p>
 
-<div class="note">
-  <strong>Note:</strong> The CLI accepts a JSON metadata file for system metadata,
-  per-channel labels, calibration scale/offset, units, axis, location, sensor
-  serial number, and bandwidth. The GUI remains the most convenient way to edit
-  those fields interactively.
-</div>
-
-<h2>Basic Usage</h2>
-
-<pre><code>vibetest-daq [OPTIONS]</code></pre>
-
-<h2>Options</h2>
-
-<table>
-  <tr><th>Option</th><th>Default</th><th>Description</th></tr>
-  <tr>
-    <td><code>-d</code>, <code>--duration SECONDS</code></td>
-    <td>None (run forever)</td>
-    <td>Stop recording after this many seconds. If omitted, the acquisition runs
-        until you press <kbd>Ctrl</kbd>+<kbd>C</kbd>.</td>
-  </tr>
-  <tr>
-    <td><code>-o</code>, <code>--output DIR</code></td>
-    <td><code>vibration_data</code></td>
-    <td>Directory where CSV files are written. Created automatically if it does not
-        exist.</td>
-  </tr>
-  <tr>
-    <td><code>-r</code>, <code>--rate HZ</code></td>
-    <td><code>5000</code></td>
-    <td>Requested sample rate in Hertz.</td>
-  </tr>
-  <tr>
-    <td><code>-f</code>, <code>--format csv|hdf5</code></td>
-    <td><code>csv</code></td>
-    <td>Output file format. Use <code>hdf5</code> for faster readback by downstream
-        analysis tools. See <a href="csv-format.html">Output Formats</a> for details
-        on both formats.</td>
-  </tr>
-  <tr>
-    <td><code>-m</code>, <code>--metadata-file PATH</code></td>
-    <td>None</td>
-    <td>Optional JSON file with system metadata and per-channel overrides such as
-        scale, offset, units, axis, location, sensor serial number, and bandwidth.</td>
-  </tr>
-</table>
-
-<h2>Examples</h2>
-
-<h3>Record for 60 seconds at 5 kHz</h3>
-
-<pre><code>vibetest-daq --duration 60 --output ./test_data --rate 5000</code></pre>
-
-<p>This creates approximately 60 CSV files (one per second, since the default block
-duration is 1&nbsp;s) in the <code>./test_data</code> directory.</p>
-
-<h3>Record indefinitely until interrupted</h3>
-
-<pre><code>vibetest-daq --output ./long_run</code></pre>
-
-<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop. The acquisition halts cleanly after the
-current block finishes writing.</p>
-
-<h3>Record at a higher sample rate</h3>
-
-<pre><code>vibetest-daq --rate 12800 --output ./highrate_data</code></pre>
-
-<h3>Record in HDF5 format</h3>
-
-<pre><code>vibetest-daq --format hdf5 --output ./test_data</code></pre>
-
-<p>Output files will have a <code>.h5</code> extension instead of <code>.csv</code>.
-The data content is identical; only the container format differs.</p>
-
-<h3>Record with metadata</h3>
-
-<pre><code>vibetest-daq --duration 60 --output ./test_data --metadata-file metadata.json</code></pre>
-
-<p>The metadata file has two top-level objects: <code>system</code> for acquisition
-metadata and <code>channels</code> for per-channel overrides keyed by channel label.</p>
-
+<h2>Metadata JSON schema</h2><p>The file has optional <code>system</code> and <code>channels</code> objects. Channel keys must exactly match a current logical label. Unknown keys are ignored. Missing values use defaults.</p>
 <pre><code>{
   "system": {
-    "test_id": "CRYOTEL-SWEEP-001",
-    "dut_make": "Sunpower",
-    "dut_model": "CryoTel GT",
-    "dut_serial": "0",
-    "test_stand": "Test Stand",
+    "test_id": "FAN-SWEEP-001",
+    "dut_make": "Acme",
+    "dut_model": "VX-10",
+    "dut_serial": "SN-0042",
+    "test_stand": "Stand A",
     "operator": "J. Smith",
-    "location": "Lab",
-    "notes": "Baseline: chiller on, CryoTel off"
+    "location": "Lab 3",
+    "notes": "Baseline; position calibration CAL-2026-17"
   },
   "channels": {
     "Mod1_Ch0": {
+      "sensor_type": "accelerometer",
+      "units": "g",
+      "bandwidth_hz": "3000",
       "axis": "X",
-      "location": "stage top",
-      "sensor_serial": "0",
-      "bandwidth_hz": "3000"
+      "location": "top plate",
+      "sensor_serial": "A123"
     },
     "Pos_Ch0": {
-      "units": "um",
-      "scale": 1.0,
+      "sensor_type": "position",
+      "units": "mm",
+      "scale": 0.5,
       "offset": 0.0,
-      "location": "stage +X edge"
+      "location": "stage edge",
+      "sensor_serial": "P456"
     }
   }
 }</code></pre>
+<p>Allowed channel override fields are <code>sensor_type</code>, <code>units</code>, <code>bandwidth_hz</code>, <code>axis</code>, <code>location</code>, <code>sensor_serial</code>, <code>scale</code>, and <code>offset</code>. Scale/offset must be JSON numbers. Position units <code>g</code> are rejected and reset to <code>um</code>. JSON syntax or file errors are reported by the argument parser before acquisition.</p>
 
-<h2>CLI vs. GUI Differences</h2>
+<h2>Fixed CLI configuration</h2>
+<table><tr><th>Constant</th><th>Current value</th></tr><tr><td><code>DEFAULT_MODULE_1</code></td><td><code>cDAQ2Mod1</code>, acceleration ai0–ai2</td></tr><tr><td><code>DEFAULT_MODULE_2</code></td><td><code>cDAQ2Mod2</code>, position ai0–ai1</td></tr><tr><td><code>DEFAULT_MODULE_3</code></td><td><code>cDAQ2Mod3</code>, currently unused</td></tr><tr><td><code>BLOCK_DURATION</code></td><td>1.0 s</td></tr><tr><td><code>SENSITIVITY</code></td><td>100.0 mV/g</td></tr><tr><td><code>IEPE_EXCITATION</code></td><td>0.004 A</td></tr><tr><td><code>FILE_PREFIX</code></td><td><code>vib</code></td></tr></table>
 
-<table>
-  <tr><th>Feature</th><th>CLI</th><th>GUI</th></tr>
-  <tr><td>Output format</td><td>CSV or HDF5 (<code>--format</code>)</td><td>CSV or HDF5 (combo box)</td></tr>
-  <tr><td>Channel selection</td><td>Shared configured channel set</td><td>Enable/disable per channel (accel + position)</td></tr>
-  <tr><td>Position sensors (NI 9215)</td><td>Supported (Pos_Ch0, Pos_Ch1)</td><td>Supported (Pos_Ch0, Pos_Ch1)</td></tr>
-  <tr><td>Block duration</td><td>Fixed at 1&nbsp;s</td><td>Configurable (1&ndash;3,600&nbsp;s)</td></tr>
-  <tr><td>System metadata</td><td>Supported with <code>--metadata-file</code></td><td>Full metadata fields</td></tr>
-  <tr><td>Channel metadata</td><td>Supported with <code>--metadata-file</code></td><td>Axis, location, sensor serial</td></tr>
-  <tr><td>Level meters</td><td>Not available</td><td>Live per-channel peak display</td></tr>
-  <tr><td>File count mode</td><td>Use <code>--duration</code></td><td>Continuous or fixed count</td></tr>
-  <tr><td>Settings persistence</td><td>None</td><td>Automatic save/restore</td></tr>
-  <tr><td>Stop method</td><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Stop button</td></tr>
-</table>
+<h2>Python orchestration API</h2><p><code>vibetest_daq.session.capture_session</code> runs a finite acquisition and returns <code>DaqCaptureResult(files, actual_sample_rate_hz, block_count, errors)</code>. It accepts output directory, duration, prefix, rate, block duration, format, metadata file, system metadata, and channel overrides. A direct dictionary overrides the same value loaded from JSON. Duration is converted to <code>ceil(duration / block_duration)</code> complete files, so recorded time may exceed the request.</p>
+<pre><code>from vibetest_daq.session import capture_session
 
-<h2>Logging</h2>
-
-<p>The CLI prints log messages to the terminal as it runs. You will see messages for:</p>
-
-<ul>
-  <li>The configured output directory, sample rate, and block size.</li>
-  <li>The actual sample rate achieved by the hardware (with a warning if it differs
-      significantly from the requested rate).</li>
-  <li>Each CSV file written, with its path and dimensions.</li>
-  <li>Any DAQ errors that occur during recording.</li>
-</ul>
-
-<div class="example">
-<strong>Example output:</strong>
-<pre><code>2026-05-20 14:30:00  INFO      Output directory : ./test_data
-2026-05-20 14:30:00  INFO      Sample rate      : 5000 Hz
-2026-05-20 14:30:00  INFO      Block duration   : 1.0 s  (5000 samples)
-2026-05-20 14:30:00  INFO      Initialising NI-DAQmx task...
-2026-05-20 14:30:00  INFO      Sample rate: 5000.000000 Hz (requested 5000.00 Hz)
-2026-05-20 14:30:00  INFO      Acquisition started -- 5000.0000 Hz, 5000-sample blocks
-2026-05-20 14:30:01  INFO      Saved ./test_data/vib_20260520_143000_000.csv  (block 1, 1.0s elapsed)
-2026-05-20 14:30:02  INFO      Saved ./test_data/vib_20260520_143001_000.csv  (block 2, 2.0s elapsed)</code></pre>
-</div>
-
-<h2>Hardware Configuration</h2>
-
-<p>The CLI uses hardcoded values for several parameters that the GUI exposes as
-settings. If you need to change them, edit the constants at the top of
-<code>daq.py</code>:</p>
-
-<table>
-  <tr><th>Constant</th><th>Default</th><th>Purpose</th></tr>
-  <tr><td><code>DEFAULT_MODULE_1</code></td><td><code>cDAQ2Mod1</code></td><td>NI-DAQmx name of the NI 9234 accelerometer module</td></tr>
-  <tr><td><code>DEFAULT_MODULE_2</code></td><td><code>cDAQ2Mod2</code></td><td>NI-DAQmx name used by the configured position channels</td></tr>
-  <tr><td><code>DEFAULT_MODULE_3</code></td><td><code>cDAQ2Mod3</code></td><td>Reserved for alternate NI 9215 position-channel wiring</td></tr>
-  <tr><td><code>SENSITIVITY</code></td><td><code>100.0</code> mV/g</td><td>Accelerometer sensitivity</td></tr>
-  <tr><td><code>IEPE_EXCITATION</code></td><td><code>0.004</code> A</td><td>Constant-current excitation</td></tr>
-  <tr><td><code>BLOCK_DURATION</code></td><td><code>1.0</code> s</td><td>Seconds per output file</td></tr>
-  <tr><td><code>DEFAULT_MAX_VOLTAGE</code></td><td><code>5.0</code> V</td><td>NI 9234 input range</td></tr>
-  <tr><td><code>POSITION_MAX_VOLTAGE</code></td><td><code>10.0</code> V</td><td>NI 9215 input range</td></tr>
-  <tr><td><code>FILE_PREFIX</code></td><td><code>vib</code></td><td>Output filename prefix</td></tr>
-</table>
-
-<div class="next">
-  Next: <a href="csv-format.html">Output Formats</a> &mdash; understanding the structure
-  of the output files.
-</div>
-
-</main>
-</body>
-</html>
+result = capture_session(
+    output_dir="test_data",
+    duration_s=5,
+    sample_rate_hz=5000,
+    system_metadata={"test_id": "FAN-SWEEP-001"},
+)
+if result.errors:
+    raise RuntimeError(result.errors)</code></pre>
+<div class="next">Next: <a href="csv-format.html">Output Files</a></div>
+</main></body></html>

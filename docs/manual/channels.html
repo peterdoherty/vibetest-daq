@@ -1,191 +1,35 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Channels &mdash; Vibetest DAQ Manual</title>
-  <link rel="stylesheet" href="manual.css">
-</head>
-<body>
-
-<header>
-  <h1>Channels</h1>
-  <p>Configure which channels are active and attach descriptive labels to each one.</p>
-</header>
-
-<nav>
-  <a href="index.html">Home</a>
-  <a href="getting-started.html">Getting Started</a>
-  <a href="gui-overview.html">GUI Overview</a>
-  <a href="metadata.html">Metadata</a>
-  <a href="channels.html">Channels</a>
-  <a href="cli.html">Command Line</a>
-  <a href="csv-format.html">Output Formats</a>
-  <a href="troubleshooting.html">Troubleshooting</a>
-</nav>
-
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Channels — Vibetest DAQ Manual</title><link rel="stylesheet" href="manual.css"></head><body>
+<header><h1>Channels</h1><p>Select physical inputs, document sensors, and calibrate position voltage channels.</p></header>
+<nav><a href="index.html">Home</a><a href="getting-started.html">Getting Started</a><a href="workflow.html">Operating Procedure</a><a href="gui-overview.html">GUI</a><a href="metadata.html">Metadata</a><a href="channels.html">Channels</a><a href="cli.html">Command Line</a><a href="csv-format.html">Output Files</a><a href="troubleshooting.html">Troubleshooting</a></nav>
 <main>
+<h2>Fixed physical map</h2>
+<table><tr><th>Channel label</th><th>Device field / terminal</th><th>DAQ configuration</th><th>Defaults</th></tr>
+<tr><td><code>Mod1_Ch0</code></td><td>Module 1 / ai0</td><td>IEPE acceleration, ±5 V input range</td><td>axis X, g</td></tr><tr><td><code>Mod1_Ch1</code></td><td>Module 1 / ai1</td><td>IEPE acceleration, ±5 V input range</td><td>axis Y, g</td></tr><tr><td><code>Mod1_Ch2</code></td><td>Module 1 / ai2</td><td>IEPE acceleration, ±5 V input range</td><td>axis Z, g</td></tr><tr><td><code>Pos_Ch0</code></td><td>Module 2 / ai0</td><td>Voltage with linear scale, ±10 V input range</td><td>position, um</td></tr><tr><td><code>Pos_Ch1</code></td><td>Module 2 / ai1</td><td>Voltage with linear scale, ±10 V input range</td><td>position, um</td></tr></table>
+<div class="warning"><strong>Metadata does not rewire hardware.</strong> Changing Sensor type, Units, or Axis cannot turn an acceleration input into a voltage input or change its terminal. DAQ configuration is fixed by the table.</div>
 
-<h2>Channel Layout</h2>
+<h2>Columns on the Channels tab</h2>
+<table><tr><th>Column</th><th>How to use it</th></tr>
+<tr><td>Enable</td><td>Includes the channel in the task and output. Disable unconnected inputs. At least one channel is required.</td></tr>
+<tr><td>Channel</td><td>Read-only logical label used in column names and metadata keys.</td></tr>
+<tr><td>Sensor type</td><td>Editable metadata (suggested values accelerometer/position). It does not alter DAQ behavior.</td></tr>
+<tr><td>Units</td><td>Engineering-unit text written to the file. Acceleration acquisition still returns g. Position channels use this text for the custom scale. A position unit entered as <code>g</code> is automatically replaced by its default <code>um</code>.</td></tr>
+<tr><td>Bandwidth</td><td>Optional sensor usable bandwidth in Hz for traceability; it does not filter the data.</td></tr>
+<tr><td>Axis</td><td>Physical sensitive direction as mounted, such as X, Y, Z, radial, or axial.</td></tr>
+<tr><td>Location</td><td>Unambiguous mounting/measurement location on the DUT.</td></tr>
+<tr><td>Sensor serial</td><td>Identifier from the physical sensor or calibration record.</td></tr>
+<tr><td>Scale (unit/V)</td><td>Position only: slope in the entered Units per volt. Range −1,000,000 to +1,000,000.</td></tr>
+<tr><td>Offset (unit)</td><td>Position only: value at zero volts, in entered Units. Same numeric range.</td></tr></table>
 
-<p>The hardware provides eight accelerometer input channels across two NI&nbsp;9234
-modules, plus two position-sensor input channels on an NI&nbsp;9215:</p>
+<h2>Acceleration setup</h2><ol><li>Connect the X/Y/Z outputs to the mapped ai0/ai1/ai2 terminals.</li><li>Enter the axes as actually mounted, not merely the sensor connector labels.</li><li>Use one set of sensors compatible with the shared sensitivity and IEPE settings.</li><li>Record individual serials and bandwidths. If calibrated sensitivities differ enough to matter, use separate runs or update the program to support per-channel sensitivity.</li></ol>
 
-<table>
-  <tr><th>Channel name</th><th>Module</th><th>Physical input</th><th>Kind</th><th>Default axis</th></tr>
-  <tr><td>Mod1_Ch0</td><td>Module 1 (NI 9234)</td><td>ai0</td><td>Accelerometer</td><td>X</td></tr>
-  <tr><td>Mod1_Ch1</td><td>Module 1 (NI 9234)</td><td>ai1</td><td>Accelerometer</td><td>Y</td></tr>
-  <tr><td>Mod1_Ch2</td><td>Module 1 (NI 9234)</td><td>ai2</td><td>Accelerometer</td><td>Z</td></tr>
-  <tr><td>Mod1_Ch3</td><td>Module 1 (NI 9234)</td><td>ai3</td><td>Accelerometer</td><td>&mdash;</td></tr>
-  <tr><td>Mod2_Ch0</td><td>Module 2 (NI 9234)</td><td>ai0</td><td>Accelerometer</td><td>X</td></tr>
-  <tr><td>Mod2_Ch1</td><td>Module 2 (NI 9234)</td><td>ai1</td><td>Accelerometer</td><td>Y</td></tr>
-  <tr><td>Mod2_Ch2</td><td>Module 2 (NI 9234)</td><td>ai2</td><td>Accelerometer</td><td>Z</td></tr>
-  <tr><td>Mod2_Ch3</td><td>Module 2 (NI 9234)</td><td>ai3</td><td>Accelerometer</td><td>&mdash;</td></tr>
-  <tr><td>Pos_Ch0</td><td>Module 3 (NI 9215)</td><td>ai0</td><td>Position (voltage)</td><td>&mdash;</td></tr>
-  <tr><td>Pos_Ch1</td><td>Module 3 (NI 9215)</td><td>ai1</td><td>Position (voltage)</td><td>&mdash;</td></tr>
-</table>
+<h2>Position scale and offset</h2><p>The NI 9215 reads voltage, and the program asks the DAQ driver to return scaled values:</p><pre><code>value_in_units = scale × measured_volts + offset</code></pre>
+<p>Use two known calibration points and the equations on the <a href="workflow.html">Operating Procedure</a> page. Then test an independent position. A default scale of 1 means 1 unit/V and is unlikely to be correct by accident. Zero scale forces a constant output equal to Offset.</p>
+<div class="note"><strong>Units are labels, not conversions.</strong> Changing Units from <code>um</code> to <code>mm</code> does not divide data by 1,000. Change Scale and Offset consistently.</div>
 
-<p>The fourth channel on each NI&nbsp;9234 module has no default axis assigned since
-the mounting arrangement (triaxial + spare, or four independent uniaxial sensors)
-depends on your test setup &mdash; set it on the Channels tab to match.</p>
+<h2>Channel order</h2><p>Enabled channels keep the fixed order shown above. CSV columns and HDF5 <code>data</code> columns follow that enabled subset. For example, if only <code>Mod1_Ch1</code> and <code>Pos_Ch0</code> are enabled, they appear in that order.</p>
 
-<div class="note">
-  <strong>Accelerometer vs. position channels:</strong> which physical module and
-  input each channel uses is fixed by the hardware wiring above and cannot be changed
-  from the GUI. The <em>Sensor type</em> field described below is a free-text metadata
-  label only (for CSV/HDF5 headers) &mdash; changing it does not change how a channel
-  is configured on the DAQ.
-</div>
-
-<h2>The Channels Tab</h2>
-
-<p>The Channels tab shows a table with one row per channel. Each row has the
-following columns:</p>
-
-<table>
-  <tr><th>Column</th><th>Description</th></tr>
-  <tr>
-    <td>Enable</td>
-    <td>A checkbox that includes or excludes this channel from the acquisition. When
-        unchecked, the channel is not configured on the hardware, no data is recorded
-        for it, and its level meter on the Acquire tab shows "off".</td>
-  </tr>
-  <tr>
-    <td>Channel</td>
-    <td>The fixed hardware channel name (e.g., <code>Mod1_Ch0</code>). This is
-        read-only.</td>
-  </tr>
-  <tr>
-    <td>Sensor type</td>
-    <td>A free-text metadata label (e.g. <code>accelerometer</code>,
-        <code>position</code>) written to the CSV/HDF5 header. Editing it does not
-        change how the channel is wired on the hardware &mdash; that's fixed by which
-        module the channel belongs to (see the Channel Layout table above).</td>
-  </tr>
-  <tr>
-    <td>Units</td>
-    <td>The engineering units for this channel's values (e.g. <code>g</code>,
-        <code>mm</code>, <code>um</code>). For position channels, this should match
-        the units your Scale/Offset values are calibrated in.</td>
-  </tr>
-  <tr>
-    <td>Bandwidth</td>
-    <td>Usable sensor bandwidth in Hz from the datasheet. Optional &mdash; leave blank
-        if unspecified.</td>
-  </tr>
-  <tr>
-    <td>Axis</td>
-    <td>The measurement axis label for this channel. Defaults to X, Y, or Z on the
-        accelerometer channels. You can change this to match your sensor orientation
-        or use any short label you prefer.</td>
-  </tr>
-  <tr>
-    <td>Location</td>
-    <td>A free-text field describing where on the DUT this sensor is mounted. For
-        example: <code>Top plate</code>, <code>Base flange</code>,
-        <code>Motor housing</code>.</td>
-  </tr>
-  <tr>
-    <td>Sensor serial</td>
-    <td>The serial number of the physical sensor connected to this channel. Useful
-        for traceability when you need to know which sensor produced a particular
-        measurement.</td>
-  </tr>
-  <tr>
-    <td>Scale (unit/V)</td>
-    <td><strong>Position (NI 9215) channels only.</strong> The slope of the linear
-        conversion from raw volts to engineering units: <code>value = scale &times;
-        volts + offset</code>. Disabled (grayed out) for accelerometer channels,
-        which use the task-wide Sensitivity/IEPE excitation settings instead. For a
-        Keyence LK-G5001, compute this from the analog output range and measurement
-        range configured on the controller &mdash; it is not a fixed constant, so the
-        default of <code>1.0</code> is only a placeholder.</td>
-  </tr>
-  <tr>
-    <td>Offset (unit)</td>
-    <td><strong>Position (NI 9215) channels only.</strong> The y-intercept of the
-        linear conversion above: the engineering-unit value corresponding to 0&nbsp;V.
-        Disabled for accelerometer channels.</td>
-  </tr>
-</table>
-
-<h2>How Channel Metadata Appears in CSV Files</h2>
-
-<p>Per-channel metadata is written into the CSV header as comment lines. Only
-non-empty fields are included:</p>
-
-<pre><code># Channel Mod1_Ch0 Axis: X
-# Channel Mod1_Ch0 Location: Top plate
-# Channel Mod1_Ch0 Sensor Serial: PCB-12345
-# Channel Mod1_Ch1 Axis: Y
-# Channel Mod1_Ch1 Location: Top plate
-# Channel Mod1_Ch1 Sensor Serial: PCB-12346</code></pre>
-
-<p>Downstream analysis software can parse these headers to label plots as "Top
-plate X" instead of the generic "Mod1_Ch0". Position channels use the same
-mechanism &mdash; for example, <code># Channel Pos_Ch0 Units: mm</code> and
-<code># Channel Pos_Ch0 Sensor Type: position</code>.</p>
-
-<h2>Enabling and Disabling Channels</h2>
-
-<p>You do not always need all ten channels. If a test only uses three accelerometer
-sensors (one triaxial accelerometer, for example) and no position sensors, uncheck the
-unused channels. This has several benefits:</p>
-
-<ul>
-  <li>The CSV files are smaller because unused columns are omitted.</li>
-  <li>The NI-DAQmx task only configures the channels it needs, which can reduce
-      bus bandwidth.</li>
-  <li>The level meters on the Acquire tab only show active channels, reducing
-      visual clutter.</li>
-</ul>
-
-<div class="warning">
-  <strong>At least one channel must be enabled.</strong> If you try to start an
-  acquisition with all channels disabled, the application will show a warning
-  and refuse to start.
-</div>
-
-<h2>Channel Summary</h2>
-
-<p>The Metadata Summary on the Acquire tab includes a <strong>Channels</strong> line
-that shows a compact view of enabled channels and their axis/location labels:</p>
-
-<div class="example">
-  <strong>Example:</strong> Channels: Mod1_Ch0=Top plate X; Mod1_Ch1=Top plate Y; Mod1_Ch2=Top plate Z
-</div>
-
-<h2>Persistence</h2>
-
-<p>Channel enable states, axis labels, location descriptions, and sensor serial
-numbers are all saved automatically. When you reopen the application, each channel
-is restored to its previous configuration.</p>
-
-<div class="next">
-  Next: <a href="cli.html">Command Line</a> &mdash; running acquisitions without the
-  GUI.
-</div>
-
-</main>
-</body>
-</html>
+<h2>What is saved</h2><p>Only enabled channels have samples and per-channel metadata written. Nonempty fields are stored using keys such as <code>Channel Mod1_Ch0 Units</code>, <code>Sensor Type</code>, <code>Bandwidth (Hz)</code>, <code>Axis</code>, <code>Location</code>, and <code>Sensor Serial</code>. Scale and Offset affect acquired position values but are not themselves written as metadata, so document the calibration source in Notes or your test record.</p>
+<div class="warning"><strong>Traceability limitation:</strong> Because scale and offset are not written to output files, preserve the GUI settings/calculation externally if raw-voltage reconstruction or calibration auditing may be required.</div>
+<div class="next">Next: <a href="cli.html">Command Line</a></div>
+</main></body></html>

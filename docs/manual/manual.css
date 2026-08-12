@@ -49,6 +49,7 @@ nav a {
 
 main {
   max-width: 1050px;
+  margin: 0 auto;
   padding: 28px clamp(18px, 5vw, 64px) 56px;
 }
 
@@ -80,6 +81,20 @@ code, kbd {
   border: 1px solid #d8e1e9;
   border-radius: 4px;
   padding: 1px 5px;
+}
+
+pre {
+  overflow-x: auto;
+  background: #f2f5f8;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 14px 16px;
+}
+
+pre code {
+  border: 0;
+  padding: 0;
+  background: transparent;
 }
 
 table {
@@ -149,8 +164,26 @@ th {
   font-weight: 600;
 }
 
+.checklist {
+  list-style: none;
+  padding-left: 0;
+}
+
+.checklist li::before {
+  content: "\2610";
+  display: inline-block;
+  width: 1.6em;
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
 @media (max-width: 720px) {
   .toc {
     columns: 1;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
   }
 }

@@ -1,126 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Getting Started &mdash; Vibetest DAQ Manual</title>
-  <link rel="stylesheet" href="manual.css">
-</head>
-<body>
-
-<header>
-  <h1>Getting Started</h1>
-  <p>Install the software and verify that your hardware is recognized.</p>
-</header>
-
-<nav>
-  <a href="index.html">Home</a>
-  <a href="getting-started.html">Getting Started</a>
-  <a href="gui-overview.html">GUI Overview</a>
-  <a href="metadata.html">Metadata</a>
-  <a href="channels.html">Channels</a>
-  <a href="cli.html">Command Line</a>
-  <a href="csv-format.html">Output Formats</a>
-  <a href="troubleshooting.html">Troubleshooting</a>
-</nav>
-
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Getting Started — Vibetest DAQ Manual</title><link rel="stylesheet" href="manual.css"></head><body>
+<header><h1>Getting Started</h1><p>Install the runtime, identify the hardware, and make a short commissioning recording.</p></header>
+<nav><a href="index.html">Home</a><a href="getting-started.html">Getting Started</a><a href="workflow.html">Operating Procedure</a><a href="gui-overview.html">GUI</a><a href="metadata.html">Metadata</a><a href="channels.html">Channels</a><a href="cli.html">Command Line</a><a href="csv-format.html">Output Files</a><a href="troubleshooting.html">Troubleshooting</a></nav>
 <main>
+<h2>Requirements</h2>
+<table><tr><th>Item</th><th>Requirement</th></tr><tr><td>Computer</td><td>Windows is the normal deployment platform for NI MAX and NI-DAQmx hardware use.</td></tr><tr><td>Python</td><td>3.10 or newer, 64-bit recommended.</td></tr><tr><td>NI software</td><td>NI-DAQmx driver and NI Measurement &amp; Automation Explorer (NI MAX).</td></tr><tr><td>Python package</td><td>This repository and its dependencies: h5py, isw-instruments, nidaqmx, NumPy, and PySide6.</td></tr><tr><td>Hardware</td><td>Compatible cDAQ chassis/modules and properly wired IEPE accelerometer and/or analog-output position sensors.</td></tr></table>
+<div class="warning"><strong>Before connecting sensors:</strong> Power down or place the DUT in a safe state. Observe the sensor, module, grounding, and connector requirements. Do not connect an ordinary voltage source to a channel while IEPE excitation is enabled unless the source is designed to tolerate it.</div>
 
-<h2>Prerequisites</h2>
+<h2>1. Install and verify NI-DAQmx</h2>
+<ol><li>Install NI-DAQmx with NI MAX, then reboot if the installer requests it.</li><li>Connect and power the cDAQ chassis.</li><li>In NI MAX, expand <em>Devices and Interfaces</em>. Record the exact module names, such as <code>cDAQ2Mod1</code> and <code>cDAQ2Mod2</code>.</li><li>Run NI MAX self-test on the chassis and modules. Resolve failures before using Vibetest DAQ.</li><li>Use an NI MAX test panel, when appropriate, to confirm a small signal can be read from each intended input.</li></ol>
+<p>Renaming devices in NI MAX changes the names that must be entered in Vibetest DAQ. Names are case-sensitive identifiers, not chassis slot descriptions.</p>
 
-<table>
-  <tr><th>Requirement</th><th>Minimum version</th><th>Where to get it</th></tr>
-  <tr><td>Python</td><td>3.10</td><td>python.org or your system package manager</td></tr>
-  <tr><td>NI-DAQmx driver</td><td>Latest</td><td>NI Package Manager (Windows) or ni.com</td></tr>
-  <tr><td>NI cDAQ-9177 + 2&times;NI 9234 + NI 9215</td><td>&mdash;</td><td>Connected via USB-C and visible in NI MAX</td></tr>
-</table>
+<h2>2. Install Vibetest DAQ</h2>
+<p>Open PowerShell in the repository root. Create and activate an isolated environment:</p>
+<pre><code>py -3.10 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .</code></pre>
+<p>If PowerShell blocks activation, either follow your organization's execution-policy procedure or invoke the environment directly, for example <code>.venv\Scripts\vibetest-daq-gui.exe</code>. Development tools are optional:</p><pre><code>python -m pip install -e ".[dev]"</code></pre>
+<p>Confirm that the entry points are installed:</p><pre><code>vibetest-daq --help
+vibetest-daq-gui</code></pre>
 
-<div class="warning">
-  <strong>Important:</strong> The NI-DAQmx driver must be installed <em>before</em>
-  you install the Python package. Without the driver, the <code>nidaqmx</code> Python
-  library cannot communicate with the hardware.
-</div>
+<h2>3. Configure the current hardware names</h2>
+<p>On the GUI Acquire tab, set <strong>Module 1 device</strong> to the module supplying <code>Mod1_Ch0</code>–<code>Ch2</code>, and <strong>Module 2 device</strong> to the module supplying <code>Pos_Ch0</code>–<code>Ch1</code>. The shipped defaults are <code>cDAQ2Mod1</code> and <code>cDAQ2Mod2</code>. Module 3 is not used by the active channel map.</p>
+<p>The CLI does not accept device-name options. Its names are the <code>DEFAULT_MODULE_1</code> and <code>DEFAULT_MODULE_2</code> constants in <code>src/vibetest_daq/daq.py</code>; change the deployment configuration/code if they do not match NI MAX.</p>
 
-<h2>Step 1 &mdash; Verify Hardware in NI MAX</h2>
-
-<p>Open <strong>NI Measurement &amp; Automation Explorer</strong> (NI MAX) and expand
-<em>Devices and Interfaces</em>. You should see your cDAQ-9177 chassis (connected via
-USB-C) and all three modules listed: two NI&nbsp;9234 accelerometer modules and one
-NI&nbsp;9215 voltage input module. Note the device names &mdash; they will look like
-<code>cDAQ1Mod1</code>, <code>cDAQ1Mod2</code>, and <code>cDAQ1Mod3</code>. You will
-need these names in the application settings.</p>
-
-<div class="note">
-  <strong>Tip:</strong> If the modules do not appear, try a different USB port, check
-  the cable, and make sure the NI-DAQmx driver is installed.
-</div>
-
-<h2>Step 2 &mdash; Create a Virtual Environment</h2>
-
-<p>It is good practice to install Python packages in a virtual environment rather
-than system-wide. Open a terminal and run:</p>
-
-<pre><code>python -m venv .venv</code></pre>
-
-<p>Activate the environment:</p>
-
-<table>
-  <tr><th>Platform</th><th>Command</th></tr>
-  <tr><td>Windows (PowerShell)</td><td><code>.venv\Scripts\Activate.ps1</code></td></tr>
-  <tr><td>Windows (cmd)</td><td><code>.venv\Scripts\activate.bat</code></td></tr>
-  <tr><td>macOS / Linux</td><td><code>source .venv/bin/activate</code></td></tr>
-</table>
-
-<h2>Step 3 &mdash; Install the Package</h2>
-
-<p>From the root of the <code>vibetest-daq</code> repository, install in editable
-mode so that changes to the source take effect immediately:</p>
-
-<pre><code>python -m pip install -e .</code></pre>
-
-<p>This installs three main dependencies automatically:</p>
-
-<ul>
-  <li><code>nidaqmx</code> &mdash; Python bindings for the NI-DAQmx C driver</li>
-  <li><code>numpy</code> &mdash; numerical array library used for data handling</li>
-  <li><code>PySide6</code> &mdash; Qt 6 bindings for the graphical interface</li>
-</ul>
-
-<p>If you plan to run the linter or tests, install the development extras too:</p>
-
-<pre><code>python -m pip install -e ".[dev]"</code></pre>
-
-<h2>Step 4 &mdash; Launch the Application</h2>
-
-<p>Start the <strong>GUI</strong>:</p>
-
-<pre><code>vibetest-daq-gui</code></pre>
-
-<p>Or run a <strong>command-line acquisition</strong>:</p>
-
-<pre><code>vibetest-daq --output vibration_data --rate 5000</code></pre>
-
-<p>If the GUI window appears and shows "Ready", the installation is complete.</p>
-
-<h2>Step 5 &mdash; First Acquisition</h2>
-
-<ol>
-  <li>In the GUI, confirm that <em>Module 1 device</em>, <em>Module 2 device</em>, and
-      <em>Module 3 device</em> match the names you saw in NI MAX.</li>
-  <li>Choose an output directory using the <strong>Browse</strong> button.</li>
-  <li>Leave the sample rate at 5000&nbsp;Hz and block duration at 10&nbsp;s for a
-      quick test.</li>
-  <li>Press <strong>Start Acquisition</strong>.</li>
-  <li>Watch the level meters respond to vibration. After a few blocks, press
-      <strong>Stop</strong>.</li>
-  <li>Open the output directory and inspect the CSV files.</li>
-</ol>
-
-<div class="next">
-  Next: <a href="gui-overview.html">GUI Overview</a> &mdash; a detailed tour of the
-  Acquire tab and its controls.
-</div>
-
-</main>
-</body>
-</html>
+<h2>4. Make a safe commissioning recording</h2>
+<ol><li>Create an empty local output folder with enough free space.</li><li>Open the Channels tab. Enable one known accelerometer channel; disable unused channels. Confirm its axis, location, sensor serial, and units.</li><li>On Acquire, enter the sensor's calibrated sensitivity and approved IEPE current. Use 5,000 Hz, a 1 s block, CSV, Continuous off, and File count 3.</li><li>With the DUT still in a safe state, press Start. Apply only a small, safe stimulus to the sensor.</li><li>Confirm the state becomes Recording, the actual rate appears, the level changes, and three files are written.</li><li>Open the newest CSV in a text editor. Confirm its Test ID, sample rate, enabled channel name, units, and plausible values.</li></ol>
+<div class="note"><strong>Do not treat a moving level bar as calibration proof.</strong> It only displays the maximum absolute value in the most recently completed block. Complete the range and calibration checks in the <a href="workflow.html">Operating Procedure</a>.</div>
+<div class="next">Next: <a href="workflow.html">Operating Procedure</a></div>
+</main></body></html>

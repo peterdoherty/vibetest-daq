@@ -1,227 +1,38 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GUI Overview &mdash; Vibetest DAQ Manual</title>
-  <link rel="stylesheet" href="manual.css">
-</head>
-<body>
-
-<header>
-  <h1>GUI Overview</h1>
-  <p>The Acquire tab is the primary operational screen &mdash; your cockpit for running vibration tests.</p>
-</header>
-
-<nav>
-  <a href="index.html">Home</a>
-  <a href="getting-started.html">Getting Started</a>
-  <a href="gui-overview.html">GUI Overview</a>
-  <a href="metadata.html">Metadata</a>
-  <a href="channels.html">Channels</a>
-  <a href="cli.html">Command Line</a>
-  <a href="csv-format.html">Output Formats</a>
-  <a href="troubleshooting.html">Troubleshooting</a>
-</nav>
-
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>GUI — Vibetest DAQ Manual</title><link rel="stylesheet" href="manual.css"></head><body>
+<header><h1>GUI Reference</h1><p>Controls and indications in <code>vibetest-daq-gui</code>.</p></header>
+<nav><a href="index.html">Home</a><a href="getting-started.html">Getting Started</a><a href="workflow.html">Operating Procedure</a><a href="gui-overview.html">GUI</a><a href="metadata.html">Metadata</a><a href="channels.html">Channels</a><a href="cli.html">Command Line</a><a href="csv-format.html">Output Files</a><a href="troubleshooting.html">Troubleshooting</a></nav>
 <main>
+<h2>Window organization</h2><p>The <strong>Acquire</strong> tab controls a run and displays status. <strong>Metadata</strong> describes the test and DUT. <strong>Channels</strong> selects inputs and records sensor information/calibration. The bottom status bar reports connection, recording, stopping, and errors.</p>
 
-<h2>Window Layout</h2>
+<h2>Acquisition settings</h2>
+<table><tr><th>Control</th><th>Shipped default / range</th><th>Effect</th></tr>
+<tr><td>Output directory</td><td><code>vibration_data</code></td><td>Destination folder; it is created when a file is written. Prefer a local disk.</td></tr>
+<tr><td>File prefix</td><td><code>vib</code></td><td>First part of every filename. Use filesystem-safe characters; do not include path separators.</td></tr>
+<tr><td>Output format</td><td>CSV</td><td>CSV is inspectable text; HDF5 is binary and generally faster to load.</td></tr>
+<tr><td>Requested rate</td><td>5,000 Hz; 1,000–51,200</td><td>Samples per second per enabled channel. The hardware-confirmed actual rate is used in files.</td></tr>
+<tr><td>Block duration</td><td>10 s; 1–3,600</td><td>Nominal seconds per file and stop-response granularity.</td></tr>
+<tr><td>Sensitivity</td><td>100 mV/g; 1–10,000</td><td>One accelerometer sensitivity applied to all enabled acceleration channels.</td></tr>
+<tr><td>IEPE excitation</td><td>0.004 A; 0–0.020</td><td>Constant current for all acceleration inputs. Use a sensor/module-approved value.</td></tr>
+<tr><td>Module 1 device</td><td><code>cDAQ2Mod1</code></td><td>Device used by <code>Mod1_Ch0</code>–<code>Ch2</code>.</td></tr>
+<tr><td>Module 2 device</td><td><code>cDAQ2Mod2</code></td><td>Device used by <code>Pos_Ch0</code>–<code>Ch1</code>.</td></tr>
+<tr><td>Module 3 device</td><td><code>cDAQ2Mod3</code></td><td>Persisted setting, but no active channel currently refers to it.</td></tr>
+<tr><td>File count</td><td>10; 1–10,000</td><td>Number of complete blocks when Continuous is off.</td></tr>
+<tr><td>Continuous</td><td>On</td><td>Runs until Stop when on; File count is disabled. When off, stops after File count blocks.</td></tr></table>
+<p>Approximate samples per channel per file are <code>actual rate × block duration</code>. At 5,000 Hz and 10 s, that is 50,000.</p>
 
-<p>The GUI window is organized into three tabs across the top:</p>
+<h2>Start, stop, and close</h2>
+<p><strong>Start Acquisition</strong> first saves all settings, rejects a run with no enabled channels, locks editable settings, creates the worker, and connects to the hardware. It does not perform semantic validation of metadata or calibration. <strong>Stop</strong> requests a stop; the current full block normally finishes before the task stops and queued output completes.</p>
+<div class="warning"><strong>Closing during acquisition:</strong> Closing the window also requests a stop and waits approximately one block duration plus five seconds. Use Stop and wait for Idle whenever possible.</div>
 
-<ol>
-  <li><strong>Acquire</strong> &mdash; acquisition settings, start/stop controls, live
-      status, and channel level meters (this page).</li>
-  <li><strong>Metadata</strong> &mdash; test identity, device-under-test info, and
-      operator details (<a href="metadata.html">see Metadata</a>).</li>
-  <li><strong>Channels</strong> &mdash; per-channel enable/disable, axis labels,
-      sensor locations, and serial numbers
-      (<a href="channels.html">see Channels</a>).</li>
-</ol>
+<h2>Status fields</h2>
+<table><tr><th>Field</th><th>Interpretation</th></tr><tr><td>State</td><td>Idle, Starting, Recording, Stopping, or Error.</td></tr><tr><td>Actual rate</td><td>Hardware-confirmed rate. Use this value for analysis.</td></tr><tr><td>Blocks written</td><td>Number of completed files reported by the writer.</td></tr><tr><td>Elapsed</td><td>Monotonic wall time reported when the last block finished writing.</td></tr><tr><td>Last file</td><td>Base filename of the newest completed output.</td></tr></table>
 
-<p>A status bar at the bottom of the window shows real-time messages about the current
-state of the system.</p>
+<h2>Peak meters</h2><p>After each file is written, each active meter shows <code>max(abs(channel samples))</code> for that block. Green is below 50% of the selected display full scale, amber is 50–80%, and red is above 80%. Disabled channels display <code>off</code> during acquisition.</p>
+<p><strong>Accel full scale</strong> (0.001–50 g) controls acceleration meters. <strong>Position full scale</strong> (0.001–1,000,000 in the channel's engineering units) controls position meters. These settings affect only display length/color; changing them cannot prevent or cause hardware clipping and does not rescale saved values. Position meter labels retain the channel's default <code>um</code> display label even if Units is edited, so use the numeric value and file metadata as authoritative.</p>
 
-<h2>Acquisition Settings</h2>
+<h2>Metadata Summary</h2><p>The read-only summary shows Test ID, DUT, setup, up to six enabled channels with axis/location, and notes truncated to 120 characters. The full metadata is still written. Treat the summary as a final preflight prompt, not validation.</p>
 
-<p>The top section of the Acquire tab contains all of the parameters that control how
-data is captured and where it is saved.</p>
-
-<table>
-  <tr><th>Setting</th><th>Default</th><th>Description</th></tr>
-  <tr>
-    <td>Output directory</td>
-    <td><code>vibration_data</code></td>
-    <td>Folder where CSV files are written. Use the <strong>Browse</strong> button to
-        choose a location. The directory is created automatically if it does not
-        exist.</td>
-  </tr>
-  <tr>
-    <td>File prefix</td>
-    <td><code>vib</code></td>
-    <td>Text prepended to each output filename. Files are named
-        <code>&lt;prefix&gt;_YYYYMMDD_HHMMSS_mmm.csv</code> (or <code>.h5</code>
-        for HDF5).</td>
-  </tr>
-  <tr>
-    <td>Output format</td>
-    <td>CSV</td>
-    <td>File format for acquired data. <strong>CSV</strong> produces human-readable
-        text files that can be opened in any editor or spreadsheet.
-        <strong>HDF5</strong> produces compact binary files that are much faster to
-        read back programmatically &mdash; useful when vibetest-analyzer is processing
-        files in real time as they are generated. See
-        <a href="csv-format.html">Output Formats</a> for details on both.</td>
-  </tr>
-  <tr>
-    <td>Requested rate</td>
-    <td>5000&nbsp;Hz</td>
-    <td>Desired sample rate in Hertz. Valid range: 1,000&ndash;51,200&nbsp;Hz. The
-        hardware may use a slightly different rate; the actual rate is shown in the
-        Status section once recording begins.</td>
-  </tr>
-  <tr>
-    <td>Block duration</td>
-    <td>10&nbsp;s</td>
-    <td>Length of each data block in seconds. Each block produces one CSV file. Valid
-        range: 1&ndash;3,600&nbsp;s.</td>
-  </tr>
-  <tr>
-    <td>Sensitivity</td>
-    <td>100&nbsp;mV/g</td>
-    <td>Accelerometer sensitivity. Check the datasheet for your sensors and set this
-        to match.</td>
-  </tr>
-  <tr>
-    <td>IEPE excitation</td>
-    <td>0.004&nbsp;A (4&nbsp;mA)</td>
-    <td>Constant-current excitation supplied to the IEPE sensors. The NI&nbsp;9234
-        typically accepts 0&nbsp;A (off) or 0.004&nbsp;A. This setting applies only
-        to the accelerometer channels &mdash; the NI&nbsp;9215 position channels use
-        no excitation.</td>
-  </tr>
-  <tr>
-    <td>Module 1 / Module 2 / Module 3 device</td>
-    <td><code>cDAQ1Mod1</code> / <code>cDAQ1Mod2</code> / <code>cDAQ1Mod3</code></td>
-    <td>NI-DAQmx device names for the two NI&nbsp;9234 accelerometer modules and the
-        NI&nbsp;9215 position module. These must match what NI MAX reports.</td>
-  </tr>
-  <tr>
-    <td>File count</td>
-    <td>10</td>
-    <td>Number of files (blocks) to record when <em>Continuous</em> is unchecked.
-        After this many files are written, acquisition stops automatically.</td>
-  </tr>
-  <tr>
-    <td>Continuous</td>
-    <td>Checked</td>
-    <td>When checked, acquisition runs indefinitely until you press Stop. When
-        unchecked, it stops after the specified file count.</td>
-  </tr>
-</table>
-
-<div class="warning">
-  <strong>All settings are locked while recording.</strong> You must stop the current
-  acquisition before changing any parameter. This prevents accidental mid-run
-  configuration changes that could produce inconsistent data.
-</div>
-
-<h2>Metadata Summary</h2>
-
-<p>Below the acquisition settings is a read-only <strong>Metadata Summary</strong>
-panel. It shows a compact preview of the current test identity, DUT information,
-active channels, and notes &mdash; so you can confirm the metadata is correct without
-switching to the Metadata tab.</p>
-
-<div class="example">
-  <strong>Example summary:</strong><br>
-  Test: FAN-SWEEP-001<br>
-  DUT: Acme VX-10 SN-42<br>
-  Setup: Stand A | J. Smith | Lab 3<br>
-  Channels: Mod1_Ch0=Top X; Mod1_Ch1=Top Y; Mod1_Ch2=Top Z; Pos_Ch0=Stage edge<br>
-  Notes: Baseline run, no load
-</div>
-
-<h2>Start and Stop</h2>
-
-<p>The two transport buttons control the acquisition lifecycle:</p>
-
-<ul>
-  <li><strong>Start Acquisition</strong> &mdash; validates that at least one channel
-      is enabled, saves all current settings, then connects to the DAQ hardware and
-      begins recording. The button is disabled while recording.</li>
-  <li><strong>Stop</strong> &mdash; signals the acquisition to halt after the current
-      block finishes writing. Enabled only while recording.</li>
-</ul>
-
-<p>Acquisition runs in a background thread, so the GUI remains responsive while data
-is being captured.</p>
-
-<h2>Status Section</h2>
-
-<p>The Status group shows real-time information about the running acquisition:</p>
-
-<table>
-  <tr><th>Field</th><th>Description</th></tr>
-  <tr><td>State</td><td><code>Idle</code>, <code>Starting</code>, <code>Recording</code>, <code>Stopping</code>, or <code>Error</code></td></tr>
-  <tr><td>Actual rate</td><td>The sample rate the hardware is actually using (may differ slightly from the requested rate)</td></tr>
-  <tr><td>Blocks written</td><td>Running count of CSV files saved so far</td></tr>
-  <tr><td>Elapsed</td><td>Wall-clock time since acquisition started, shown as <code>H:MM:SS</code></td></tr>
-  <tr><td>Last file</td><td>Filename of the most recently written CSV</td></tr>
-</table>
-
-<h2>Channel Level Meters</h2>
-
-<p>At the bottom of the Acquire tab, ten horizontal bar meters show the <strong>peak
-reading</strong> for each channel during each block: peak acceleration (in <em>g</em>)
-for the eight accelerometer channels, and peak position (in that channel's configured
-units) for the two NI&nbsp;9215 position channels. The meters update once per
-block.</p>
-
-<h3>Color coding</h3>
-<table>
-  <tr><th>Color</th><th>Meaning</th></tr>
-  <tr><td style="color:#27ae60;font-weight:bold;">Green</td><td>Peak is below 50% of full scale</td></tr>
-  <tr><td style="color:#e67e22;font-weight:bold;">Amber</td><td>Peak is between 50% and 80% of full scale</td></tr>
-  <tr><td style="color:#c0392b;font-weight:bold;">Red</td><td>Peak exceeds 80% of full scale &mdash; the sensor may be close to clipping</td></tr>
-</table>
-
-<h3>Full scale controls</h3>
-<p>Because the accelerometer and position channels report in very different units,
-there are two separate full-scale spinners above the meters:</p>
-
-<ul>
-  <li><strong>Accel full scale</strong> (in <em>g</em>) &mdash; sets the reference
-      level for the color thresholds on the eight accelerometer channels. For
-      example, if you expect peaks around 0.5&nbsp;g, set it to 1.0&nbsp;g so the
-      meters use the full bar range.</li>
-  <li><strong>Position full scale</strong> (in the position channels' configured
-      engineering units) &mdash; sets the reference level for <code>Pos_Ch0</code>
-      and <code>Pos_Ch1</code>. Set it to the expected full-scale travel of your
-      Keyence sensor, in the same units as the Units field on the Channels tab.</li>
-</ul>
-
-<div class="note">
-  <strong>Note:</strong> Disabled channels show "off" instead of a meter bar.
-  Only channels enabled on the <a href="channels.html">Channels tab</a> display
-  live readings.
-</div>
-
-<h2>Settings Persistence</h2>
-
-<p>All GUI settings &mdash; acquisition parameters, metadata fields, and channel
-configuration &mdash; are saved automatically when you press <strong>Start</strong>
-or close the window. The next time you open the application, your previous settings
-are restored. This is handled by Qt's <code>QSettings</code> system, which stores
-values in a platform-appropriate location (the Windows registry, macOS preferences,
-or an INI file on Linux).</p>
-
-<div class="next">
-  Next: <a href="metadata.html">Metadata</a> &mdash; recording test identity and
-  device-under-test information.
-</div>
-
-</main>
-</body>
-</html>
+<h2>Settings persistence</h2><p>Settings are saved when Start is pressed and when the window closes, using Qt <code>QSettings</code> under organization <code>vibetest</code> and application <code>daq</code>. They persist between runs and operators on the same user account. Always check stale Test ID, metadata, calibration, channel enable states, and output path.</p>
+<div class="next">Next: <a href="metadata.html">Metadata</a></div>
+</main></body></html>

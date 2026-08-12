@@ -1,122 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vibetest DAQ Manual</title>
-  <link rel="stylesheet" href="manual.css">
-</head>
-<body>
-
-<header>
-  <h1>Vibetest DAQ Manual</h1>
-  <p>Vibration and position data acquisition for the NI&nbsp;cDAQ-9177 chassis, using NI&nbsp;9234 IEPE accelerometer modules and an NI&nbsp;9215 analog voltage module. Developed at the Smithsonian Astrophysical Observatory.</p>
-</header>
-
-<nav>
-  <a href="index.html">Home</a>
-  <a href="getting-started.html">Getting Started</a>
-  <a href="gui-overview.html">GUI Overview</a>
-  <a href="metadata.html">Metadata</a>
-  <a href="channels.html">Channels</a>
-  <a href="cli.html">Command Line</a>
-  <a href="csv-format.html">Output Formats</a>
-  <a href="troubleshooting.html">Troubleshooting</a>
-</nav>
-
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vibetest DAQ Manual</title><link rel="stylesheet" href="manual.css"></head><body>
+<header><h1>Vibetest DAQ Manual</h1><p>How to configure, operate, and verify vibration and position data acquisition with National Instruments cDAQ hardware.</p></header>
+<nav><a href="index.html">Home</a><a href="getting-started.html">Getting Started</a><a href="workflow.html">Operating Procedure</a><a href="gui-overview.html">GUI</a><a href="metadata.html">Metadata</a><a href="channels.html">Channels</a><a href="cli.html">Command Line</a><a href="csv-format.html">Output Files</a><a href="troubleshooting.html">Troubleshooting</a></nav>
 <main>
+<h2>Purpose and audience</h2>
+<p>Vibetest DAQ records synchronized acceleration and analog position measurements. This manual assumes basic laboratory safety and undergraduate-level measurement knowledge, but no prior experience with this program. A new operator should begin with <a href="getting-started.html">Getting Started</a>, then follow the <a href="workflow.html">Operating Procedure</a> for the first test.</p>
+<div class="warning"><strong>Measurement responsibility:</strong> The program cannot tell whether a sensor is mounted correctly, whether its sensitivity or position calibration is correct, or whether the test is safe. Have the test owner approve the mechanical setup, sensor ranges, and operating limits before energizing the device under test (DUT).</div>
 
-<h2>What is Vibetest DAQ?</h2>
+<h2>What the program does</h2>
+<p>The GUI (<code>vibetest-daq-gui</code>) provides interactive settings, metadata, channel selection, and block-level peak meters. The CLI (<code>vibetest-daq</code>) provides fixed one-second blocks for scripts and unattended runs. Both use the same acquisition and file-writing code and can write CSV or HDF5.</p>
+<p>Samples are acquired continuously in fixed-duration <em>blocks</em>. Each completed block becomes one timestamped file. Pressing Stop is graceful: the current hardware read finishes, queued files are written, and then the session ends. With a long block duration, stopping can therefore take about one block plus processing time.</p>
 
-<p>Vibetest DAQ is a data acquisition tool that records vibration measurements from
-IEPE (Integrated Electronics Piezo-Electric) accelerometers, together with position
-measurements from analog-output displacement sensors (such as Keyence LK-series
-laser sensors), connected to National Instruments hardware. It saves each block of
-samples as a timestamped CSV file that you can later analyze with spectral analysis
-software, MATLAB, Python, or any tool that reads plain text.</p>
+<h2>Current channel map</h2>
+<table><tr><th>Logical channel</th><th>Physical input</th><th>Measurement</th><th>Default units</th></tr>
+<tr><td><code>Mod1_Ch0</code></td><td>Module 1 / ai0</td><td>IEPE acceleration, X</td><td>g</td></tr>
+<tr><td><code>Mod1_Ch1</code></td><td>Module 1 / ai1</td><td>IEPE acceleration, Y</td><td>g</td></tr>
+<tr><td><code>Mod1_Ch2</code></td><td>Module 1 / ai2</td><td>IEPE acceleration, Z</td><td>g</td></tr>
+<tr><td><code>Pos_Ch0</code></td><td>Module 2 / ai0</td><td>Analog voltage with linear position scale</td><td>um</td></tr>
+<tr><td><code>Pos_Ch1</code></td><td>Module 2 / ai1</td><td>Analog voltage with linear position scale</td><td>um</td></tr></table>
+<div class="note"><strong>Important current-version detail:</strong> Active channels use only the Module 1 and Module 2 device names. The GUI's Module 3 field is saved but is not referenced by the current channel map. Do not connect a required sensor based only on the field label; verify the table above and the device names in NI MAX.</div>
 
-<p>The package provides two ways to run an acquisition:</p>
+<h2>Concepts you need</h2>
+<h3>Acceleration and IEPE</h3><p>An IEPE accelerometer needs constant-current excitation. The configured sensitivity in mV/g converts its electrical signal to acceleration in g. Use the calibrated sensitivity for the connected sensor. The one GUI sensitivity value applies to all enabled accelerometer channels, so sensors with materially different sensitivities should not be mixed in one acquisition.</p>
+<h3>Position scaling</h3><p>Position inputs are voltage channels. For each position channel the program applies <code>position = scale &times; voltage + offset</code>. Scale is in engineering units per volt and offset is in the same engineering units. The default scale of 1 and offset of 0 are placeholders, not a calibration.</p>
+<h3>Sample rate and bandwidth</h3><p>A sample rate of <em>Fs</em> has a Nyquist frequency of <em>Fs</em>/2, but a practical test should also respect the sensor and module bandwidth and leave margin below Nyquist. For example, a 5 kHz rate cannot support analysis above 2.5 kHz. Always use the <em>actual</em> rate stored in the output file; hardware may adjust the request.</p>
+<h3>Time</h3><p>Files use UTC block timestamps and POSIX epoch seconds. The sample time column is generated from the block start and actual sample rate. Synchronize the acquisition computer's clock before tests that must correlate with other systems.</p>
 
-<ul>
-  <li><strong>GUI</strong> (<code>vibetest-daq-gui</code>) &mdash; a desktop application with
-      controls for all acquisition settings, test metadata, per-channel configuration,
-      and live level meters.</li>
-  <li><strong>Command line</strong> (<code>vibetest-daq</code>) &mdash; a headless script
-      suitable for automated or unattended recording.</li>
-</ul>
-
-<h2>Hardware at a Glance</h2>
-
-<table>
-  <tr><th>Component</th><th>Model</th><th>Role</th></tr>
-  <tr><td>Chassis</td><td>NI cDAQ-9177</td><td>8-slot USB-C carrier for C-Series modules</td></tr>
-  <tr><td>Accelerometer input modules</td><td>NI 9234 (x2)</td><td>4-channel 24-bit IEPE accelerometer input, up to 51.2&nbsp;kS/s per channel</td></tr>
-  <tr><td>Position input module</td><td>NI 9215</td><td>4-channel &plusmn;10&nbsp;V simultaneous analog voltage input (used for position sensors)</td></tr>
-  <tr><td>Vibration sensors</td><td>Any IEPE accelerometer</td><td>Converts mechanical vibration to an analog voltage signal</td></tr>
-  <tr><td>Position sensors</td><td>Keyence LK-series laser displacement sensors (e.g. LK-G5001 controller)</td><td>Analog voltage output proportional to measured distance</td></tr>
-</table>
-
-<p>Each NI&nbsp;9234 module has four input channels, so two modules give you eight
-accelerometer channels total (Mod1_Ch0&ndash;Ch3, Mod2_Ch0&ndash;Ch3). The NI&nbsp;9215
-provides two additional position channels (Pos_Ch0, Pos_Ch1) for Keyence sensor
-analog outputs — ten channels in all.</p>
-
-<div class="note">
-  <strong>Note:</strong> The NI&nbsp;9215 position channels do not use IEPE excitation
-  or a mV/g sensitivity — each has its own linear scale (engineering units per volt,
-  plus an offset) configured on the Channels tab. You must compute this scale from
-  your Keyence controller's configured analog output range and measurement range; see
-  <a href="channels.html">Channels</a>.
-</div>
-
-<h2>Table of Contents</h2>
-
-<ul class="toc">
-  <li><a href="getting-started.html">Getting Started</a> &mdash; install Python, drivers, and the package</li>
-  <li><a href="gui-overview.html">GUI Overview</a> &mdash; the Acquire tab, start/stop controls, status readouts, and level meters</li>
-  <li><a href="metadata.html">Metadata</a> &mdash; recording test identity, DUT info, and operator details</li>
-  <li><a href="channels.html">Channels</a> &mdash; enabling/disabling channels and adding per-channel labels</li>
-  <li><a href="cli.html">Command Line</a> &mdash; running acquisitions from a terminal without the GUI</li>
-  <li><a href="csv-format.html">Output Formats</a> &mdash; CSV and HDF5 output file structure</li>
-  <li><a href="troubleshooting.html">Troubleshooting</a> &mdash; common errors and how to fix them</li>
-</ul>
-
-<h2>Key Concepts</h2>
-
-<h3>IEPE Sensors</h3>
-<p>IEPE accelerometers contain a built-in charge amplifier powered by a constant-current
-excitation (typically 4&nbsp;mA). The NI&nbsp;9234 supplies this current and reads
-the resulting AC voltage. The <em>sensitivity</em> of the sensor (in mV/g) converts
-that voltage to acceleration in units of <em>g</em> (1&nbsp;g&nbsp;=&nbsp;9.81&nbsp;m/s&sup2;).</p>
-
-<h3>Position Sensors</h3>
-<p>The NI&nbsp;9215 has no IEPE excitation — it's a plain &plusmn;10&nbsp;V analog
-input, used here for the analog voltage output of a Keyence laser displacement
-sensor. Unlike the accelerometer channels, each position channel has its own
-independent linear scale (<em>value = scale &times; volts + offset</em>) so it can
-report directly in the sensor's engineering units (mm, &micro;m, etc.). That scale
-depends on how the Keyence controller's analog output range is configured relative
-to its measurement range, so it must be entered per channel rather than assumed.</p>
-
-<h3>Blocks and Files</h3>
-<p>Data is acquired continuously, but it is written to disk in fixed-length
-<em>blocks</em>. Each block becomes one CSV file. The <strong>block duration</strong>
-setting controls how many seconds of data go into each file. For example, at a
-5&nbsp;kHz sample rate with a 10-second block duration, each file contains
-50,000 samples per channel.</p>
-
-<h3>Sample Rate</h3>
-<p>The sample rate determines how many readings per second the hardware takes on each
-channel. To capture vibrations up to a frequency <em>f</em>, you need a sample rate
-of at least 2<em>f</em> (the Nyquist criterion). A 5&nbsp;kHz rate lets you analyze
-frequencies up to 2.5&nbsp;kHz.</p>
-
-<div class="note">
-  <strong>Note:</strong> The hardware may adjust the requested sample rate slightly
-  to match its internal clock dividers. The actual rate used is reported in both the
-  GUI status bar and the CSV file header.
-</div>
-
-</main>
-</body>
-</html>
+<h2>Manual contents</h2>
+<ul class="toc"><li><a href="getting-started.html">Getting Started</a> — install software and prove the hardware path</li><li><a href="workflow.html">Operating Procedure</a> — plan, preflight, acquire, and verify a test</li><li><a href="gui-overview.html">GUI</a> — every control and status indication</li><li><a href="metadata.html">Metadata</a> — make files traceable</li><li><a href="channels.html">Channels</a> — mapping, selection, and position calibration</li><li><a href="cli.html">Command Line</a> — options, JSON metadata, and automation limits</li><li><a href="csv-format.html">Output Files</a> — exact CSV/HDF5 structures and reading examples</li><li><a href="troubleshooting.html">Troubleshooting</a> — installation, hardware, data, and file problems</li></ul>
+</main></body></html>
