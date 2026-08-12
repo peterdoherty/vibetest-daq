@@ -62,7 +62,7 @@ def test_build_channel_specs_uses_channel_defs_with_default_scale_and_offset():
     position = next(s for s in specs if s["label"] == "Pos_Ch0")
     assert position == {
         "phys": "cDAQ2Mod2/ai0", "label": "Pos_Ch0", "kind": "voltage",
-        "scale": 1.0, "offset": 0.0, "units": "um",
+        "scale": 1.0, "offset": 0.0, "units": "mm",
     }
 
 
@@ -80,7 +80,7 @@ def test_build_channel_specs_rejects_position_units_g_override():
     specs = daq.build_channel_specs({"Pos_Ch0": {"units": "g"}})
 
     position = next(s for s in specs if s["label"] == "Pos_Ch0")
-    assert position["units"] == "um"
+    assert position["units"] == "mm"
 
 
 def test_build_channel_metadata_uses_channel_defs_and_overrides():
@@ -95,7 +95,7 @@ def test_build_channel_metadata_uses_channel_defs_and_overrides():
 
     position = next(r for r in rows if r["label"] == "Pos_Ch0")
     assert position["sensor_type"] == "position"
-    assert position["units"] == "um"
+    assert position["units"] == "mm"
     assert position["location"] == "stage +X edge"
     assert position["sensor_serial"] == "SN1"
 
@@ -105,7 +105,7 @@ def test_build_channel_metadata_rejects_position_units_g_override():
 
     position = next(r for r in rows if r["label"] == "Pos_Ch0")
     assert position["sensor_type"] == "position"
-    assert position["units"] == "um"
+    assert position["units"] == "mm"
 
 
 def test_main_builds_config_from_cli_arguments_and_calls_run_acquisition(

@@ -63,7 +63,7 @@ def test_channel_defs_are_three_accel_and_two_position_channels():
         c["sensor_type"] == "accelerometer" and c["units"] == "g" for c in accel
     )
     assert all(
-        c["sensor_type"] == "position" and c["units"] == "um" for c in position
+        c["sensor_type"] == "position" and c["units"] == "mm" for c in position
     )
 
 
@@ -168,8 +168,8 @@ def test_normalize_position_channel_units_replaces_stale_g_units():
 
     assert specs[0]["units"] == "g"
     assert metadata[0]["units"] == "g"
-    assert specs[1]["units"] == "um"
-    assert metadata[1]["units"] == "um"
+    assert specs[1]["units"] == "mm"
+    assert metadata[1]["units"] == "mm"
 
 
 def test_normalize_position_channel_units_preserves_displacement_units():

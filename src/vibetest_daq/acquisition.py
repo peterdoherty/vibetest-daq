@@ -49,7 +49,16 @@ def _accel_chdef(label, module, ai, axis):
 def _position_chdef(label, module, ai):
     return {
         "label": label, "kind": "voltage", "module": module, "ai": ai,
-        "axis": "", "sensor_type": "position", "units": "um",
+        # Default scale/offset (see build_channel_specs) is an identity
+        # pass-through, so the recorded value equals the raw voltage. This
+        # lab's Keyence position sensor is fixed at 1 V/mm, so an unscaled
+        # reading already equals millimeters -- label units "mm" to match
+        # rather than "V", so downstream consumers (e.g. vibetest-pipeline)
+        # recognize the unit and convert to microns directly instead of
+        # falling back to an assumed scale. A different sensor with a
+        # different transfer function needs a real --metadata-file scale
+        # override, not just a different units label.
+        "axis": "", "sensor_type": "position", "units": "mm",
     }
 
 
